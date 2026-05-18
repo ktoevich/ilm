@@ -13,6 +13,15 @@ dist/
 build/
 *.pyc
 __pycache__/
+*/__pycache__/
 
 # Log files
 *.log
+
+# Environment variables
+.env
+.env.*
+
+# Databases
+*.sqlite3
+*.db
