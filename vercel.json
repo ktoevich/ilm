@@ -1,14 +1,22 @@
 {
-  "experimentalServices": {
-    "frontend": {
-      "entrypoint": "frontend/index.html",
-      "builder": "@vercel/static",
-      "routePrefix": "/"
+  "builds": [
+    {
+      "src": "frontend/**/*",
+      "use": "@vercel/static"
     },
-    "backend": {
-      "entrypoint": "backend/config/wsgi.py",
-      "builder": "@vercel/python",
-      "routePrefix": "/_/backend"
+    {
+      "src": "backend/config/wsgi.py",
+      "use": "@vercel/python"
     }
-  }
+  ],
+  "routes": [
+    {
+      "src": "/_/backend/(.*)",
+      "dest": "backend/config/wsgi.py"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "frontend/$1"
+    }
+  ]
 }
