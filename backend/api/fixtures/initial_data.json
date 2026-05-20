@@ -1,0 +1,214 @@
+[
+    {
+        "model": "api.croptype",
+        "pk": 1,
+        "fields": {
+            "name": "Пшеница",
+            "name_latin": "Triticum",
+            "description": "Основная зерновая культура. Требует плодородные почвы.",
+            "min_return_interval": 2,
+            "color": "#F5DEB3"
+        }
+    },
+    {
+        "model": "api.croptype",
+        "pk": 2,
+        "fields": {
+            "name": "Кукуруза",
+            "name_latin": "Zea mays",
+            "description": "Кормовая и продовольственная культура. Любит тепло и влагу.",
+            "min_return_interval": 2,
+            "color": "#FFD700"
+        }
+    },
+    {
+        "model": "api.croptype",
+        "pk": 3,
+        "fields": {
+            "name": "Подсолнечник",
+            "name_latin": "Helianthus annuus",
+            "description": "Масличная культура. Сильно истощает почву.",
+            "min_return_interval": 5,
+            "color": "#FFA500"
+        }
+    },
+    {
+        "model": "api.croptype",
+        "pk": 4,
+        "fields": {
+            "name": "Соя",
+            "name_latin": "Glycine max",
+            "description": "Бобовая культура. Обогащает почву азотом.",
+            "min_return_interval": 2,
+            "color": "#90EE90"
+        }
+    },
+    {
+        "model": "api.croptype",
+        "pk": 5,
+        "fields": {
+            "name": "Ячмень",
+            "name_latin": "Hordeum vulgare",
+            "description": "Зерновая культура, устойчива к засухе.",
+            "min_return_interval": 2,
+            "color": "#DEB887"
+        }
+    },
+    {
+        "model": "api.croptype",
+        "pk": 6,
+        "fields": {
+            "name": "Горох",
+            "name_latin": "Pisum sativum",
+            "description": "Бобовая культура. Отличный предшественник для зерновых.",
+            "min_return_interval": 3,
+            "color": "#32CD32"
+        }
+    },
+    {
+        "model": "api.croptype",
+        "pk": 7,
+        "fields": {
+            "name": "Рапс",
+            "name_latin": "Brassica napus",
+            "description": "Масличная культура. Хороший медонос.",
+            "min_return_interval": 4,
+            "color": "#FFFF00"
+        }
+    },
+    {
+        "model": "api.croptype",
+        "pk": 8,
+        "fields": {
+            "name": "Картофель",
+            "name_latin": "Solanum tuberosum",
+            "description": "Клубнеплод. Требует рыхлую почву и регулярный полив.",
+            "min_return_interval": 3,
+            "color": "#CD853F"
+        }
+    },
+    {
+        "model": "api.croptype",
+        "pk": 9,
+        "fields": {
+            "name": "Сахарная свёкла",
+            "name_latin": "Beta vulgaris",
+            "description": "Техническая культура. Требовательна к плодородию.",
+            "min_return_interval": 4,
+            "color": "#8B4513"
+        }
+    },
+    {
+        "model": "api.croptype",
+        "pk": 10,
+        "fields": {
+            "name": "Хлопок",
+            "name_latin": "Gossypium",
+            "description": "Техническая культура. Требует много тепла и воды.",
+            "min_return_interval": 3,
+            "color": "#FFFAF0"
+        }
+    },
+    {
+        "model": "api.croptype",
+        "pk": 11,
+        "fields": {
+            "name": "Рис",
+            "name_latin": "Oryza sativa",
+            "description": "Зерновая культура. Выращивается на затопленных полях.",
+            "min_return_interval": 1,
+            "color": "#FAF0E6"
+        }
+    },
+    {
+        "model": "api.croptype",
+        "pk": 12,
+        "fields": {
+            "name": "Люцерна",
+            "name_latin": "Medicago sativa",
+            "description": "Многолетняя кормовая культура. Обогащает почву азотом.",
+            "min_return_interval": 3,
+            "color": "#9370DB"
+        }
+    },
+    {
+        "model": "api.weeddatabase",
+        "pk": 1,
+        "fields": {
+            "name": "Осот полевой",
+            "name_latin": "Sonchus arvensis",
+            "description": "Многолетний корнеотпрысковый сорняк. Трудноискоренимый.",
+            "danger_level": "high",
+            "control_methods": "1. Механическая обработка (многократное подрезание корней)\n2. Гербициды на основе глифосата\n3. Севооборот с пропашными культурами",
+            "color_signature": null,
+            "texture_features": null,
+            "reference_images_json": null,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z"
+        }
+    },
+    {
+        "model": "api.weeddatabase",
+        "pk": 2,
+        "fields": {
+            "name": "Пырей ползучий",
+            "name_latin": "Elytrigia repens",
+            "description": "Многолетний корневищный злаковый сорняк.",
+            "danger_level": "high",
+            "control_methods": "1. Глубокая осенняя вспашка\n2. Культивация с выборкой корневищ\n3. Гербициды против злаковых сорняков",
+            "color_signature": null,
+            "texture_features": null,
+            "reference_images_json": null,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z"
+        }
+    },
+    {
+        "model": "api.weeddatabase",
+        "pk": 3,
+        "fields": {
+            "name": "Щирица запрокинутая",
+            "name_latin": "Amaranthus retroflexus",
+            "description": "Однолетний яровой сорняк. Очень плодовитый.",
+            "danger_level": "medium",
+            "control_methods": "1. Довсходовые гербициды\n2. Боронование посевов\n3. Ранняя уборка до осыпания семян",
+            "color_signature": null,
+            "texture_features": null,
+            "reference_images_json": null,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z"
+        }
+    },
+    {
+        "model": "api.weeddatabase",
+        "pk": 4,
+        "fields": {
+            "name": "Вьюнок полевой",
+            "name_latin": "Convolvulus arvensis",
+            "description": "Многолетний корнеотпрысковый сорняк. Обвивает культурные растения.",
+            "danger_level": "high",
+            "control_methods": "1. Систематическое подрезание побегов\n2. Гербициды на основе 2,4-Д\n3. Паровая обработка",
+            "color_signature": null,
+            "texture_features": null,
+            "reference_images_json": null,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z"
+        }
+    },
+    {
+        "model": "api.weeddatabase",
+        "pk": 5,
+        "fields": {
+            "name": "Марь белая",
+            "name_latin": "Chenopodium album",
+            "description": "Однолетний яровой сорняк. Широко распространён.",
+            "danger_level": "low",
+            "control_methods": "1. Ручная прополка в ранние сроки\n2. Боронование\n3. Послевсходовые гербициды",
+            "color_signature": null,
+            "texture_features": null,
+            "reference_images_json": null,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z"
+        }
+    }
+]
