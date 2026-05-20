@@ -5,7 +5,7 @@
       "routePrefix": "/"
     },
     "backend": {
-      "entrypoint": "backend",
+      "entrypoint": "backend/wsgi.py",
       "routePrefix": "/_/backend"
     }
   }
