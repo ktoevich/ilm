@@ -1,0 +1,21 @@
+{
+  "name": "olympiad",
+  "version": "1.0.0",
+  "description": "��#\u0000 \u0000i\u0000l\u0000m\u0000\r\u0000 \u0000",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ktoevich/ilm.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/ktoevich/ilm/issues"
+  },
+  "homepage": "https://github.com/ktoevich/ilm#readme"
+}

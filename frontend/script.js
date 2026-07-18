@@ -1,4 +1,6 @@
-const API_URL = "/_/backend/api/v1/get_fields";
+const API_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? 'http://127.0.0.1:8000/api'
+  : '/api';
 
 let map;
 let currentOverlay = null;
@@ -6,6 +8,101 @@ let currentBounds = null;
 let currentAnalysisType = 'ndvi';
 let drawnItems = null;
 let currentDrawnLayer = null;
+let allFields = [];
+
+const LAND_PRICES = {
+  "Таджикистан": { priceUsdPerKm2: 350000, priceUsdPerHa: 3500, currency: "TJS", symbol: "TJS", flag: "🇹🇯" },
+  "Узбекистан": { priceUsdPerKm2: 400000, priceUsdPerHa: 4000, currency: "UZS", symbol: "сум", flag: "🇺🇿" },
+  "Казахстан": { priceUsdPerKm2: 100000, priceUsdPerHa: 1000, currency: "KZT", symbol: "₸", flag: "🇰🇿" },
+  "Россия": { priceUsdPerKm2: 150000, priceUsdPerHa: 1500, currency: "RUB", symbol: "₽", flag: "🇷🇺" },
+  "Киргизия": { priceUsdPerKm2: 250000, priceUsdPerHa: 2500, currency: "KGS", symbol: "сом", flag: "🇰🇬" },
+  "default": { priceUsdPerKm2: 300000, priceUsdPerHa: 3000, currency: "USD", symbol: "$", flag: "🌍" }
+};
+
+function getLandPriceConfig(countryName) {
+  if (!countryName) return LAND_PRICES["default"];
+  const name = countryName.toLowerCase().trim();
+  if (name.includes("таджик")) return LAND_PRICES["Таджикистан"];
+  if (name.includes("узбек")) return LAND_PRICES["Узбекистан"];
+  if (name.includes("казах")) return LAND_PRICES["Казахстан"];
+  if (name.includes("росси")) return LAND_PRICES["Россия"];
+  if (name.includes("кирг") || name.includes("кырг")) return LAND_PRICES["Киргизия"];
+  return LAND_PRICES["default"];
+}
+
+function getCountryByCoords(lat, lon) {
+  if (37.0 <= lat && lat <= 46.0 && 59.0 <= lon && lon <= 74.0) {
+    return "Узбекистан";
+  } else if (45.0 <= lat && lat <= 56.0 && 50.0 <= lon && lon <= 88.0) {
+    return "Казахстан";
+  } else if (41.0 <= lat && lat <= 82.0 && 19.0 <= lon && lon <= 170.0) {
+    return "Россия";
+  } else if (36.0 <= lat && lat <= 41.0 && 67.0 <= lon && lon <= 75.0) {
+    return "Таджикистан";
+  } else if (39.0 <= lat && lat <= 44.0 && 69.0 <= lon && lon <= 80.0) {
+    return "Киргизия";
+  }
+  return "Выбранная местность";
+}
+
+function formatMoney(amount, currencySymbol) {
+  if (amount === 0) return "-";
+  const fractionDigits = amount < 100 ? 2 : 0;
+  return amount.toLocaleString('ru-RU', { maximumFractionDigits: fractionDigits }) + " " + currencySymbol;
+}
+
+window.changeTheme = function (theme) {
+  const root = document.documentElement;
+  if (theme === 'light') {
+    root.style.setProperty('--bg-dark', '#f3f4f6');
+    root.style.setProperty('--bg-darker', '#e5e7eb');
+    root.style.setProperty('--card-bg', '#ffffff');
+    root.style.setProperty('--card-bg-light', '#f9fafb');
+    root.style.setProperty('--text-main', '#1f2937');
+    root.style.setProperty('--text-muted', '#6b7280');
+    root.style.setProperty('--border-color', 'rgba(0, 0, 0, 0.08)');
+    root.style.setProperty('--glass-bg', 'rgba(0, 0, 0, 0.02)');
+    root.style.setProperty('--glass-border', 'rgba(0, 0, 0, 0.05)');
+    
+    // Readability overrides for light theme:
+    root.style.setProperty('--primary', '#4f46e5');
+    root.style.setProperty('--primary-light', '#312e81');
+    root.style.setProperty('--accent', '#0284c7');
+    root.style.setProperty('--accent-green', '#059669');
+    root.style.setProperty('--accent-orange', '#d97706');
+    root.style.setProperty('--accent-red', '#dc2626');
+    root.style.setProperty('--accent-purple', '#7c3aed');
+    root.style.setProperty('--card-glass-bg', 'rgba(255, 255, 255, 0.6)');
+    root.style.setProperty('--gradient-success', 'linear-gradient(135deg, #0284c7 0%, #059669 100%)');
+    
+    document.body.style.background = '#f3f4f6';
+  } else { // dark / default
+    root.style.setProperty('--bg-dark', '#0a0a0f');
+    root.style.setProperty('--bg-darker', '#050508');
+    root.style.setProperty('--card-bg', '#12121a');
+    root.style.setProperty('--card-bg-light', '#1a1a25');
+    root.style.setProperty('--text-main', '#e0e0e0');
+    root.style.setProperty('--text-muted', '#888');
+    root.style.setProperty('--border-color', 'rgba(255, 255, 255, 0.08)');
+    root.style.setProperty('--glass-bg', 'rgba(255, 255, 255, 0.05)');
+    root.style.setProperty('--glass-border', 'rgba(255, 255, 255, 0.1)');
+    
+    // Reset colors for dark theme:
+    root.style.setProperty('--primary', '#646cff');
+    root.style.setProperty('--primary-light', '#8b8fff');
+    root.style.setProperty('--accent', '#00d2ff');
+    root.style.setProperty('--accent-green', '#00ff88');
+    root.style.setProperty('--accent-orange', '#ff9500');
+    root.style.setProperty('--accent-red', '#ff4757');
+    root.style.setProperty('--accent-purple', '#a855f7');
+    root.style.setProperty('--card-glass-bg', 'rgba(30, 30, 30, 0.6)');
+    root.style.setProperty('--gradient-success', 'linear-gradient(135deg, #00d2ff 0%, #00ff88 100%)');
+    
+    document.body.style.background = '#0a0a0f';
+  }
+  
+  localStorage.setItem('favorable-soil-theme', theme);
+};
 
 let sessionStats = {
  startTime: Date.now(),
@@ -38,21 +135,60 @@ const resultsContainer = document.getElementById('results-container');
 const legendItems = document.getElementById('legend-items');
 
 document.addEventListener('DOMContentLoaded', () => {
- initMap();
- switchPage('analysis');
- loadFields();
+  initMap();
+  switchPage('analysis');
+  loadFields();
 
- const printDateEl = document.getElementById('print-date');
- if (printDateEl) {
- printDateEl.textContent = new Date().toLocaleDateString('ru-RU', {
- weekday: 'long',
- year: 'numeric',
- month: 'long',
- day: 'numeric',
- hour: '2-digit',
- minute: '2-digit'
- });
- }
+  const savedTheme = localStorage.getItem('favorable-soil-theme') || 'dark';
+  const themeSelect = document.getElementById('theme-select');
+  if (themeSelect) themeSelect.value = savedTheme;
+  changeTheme(savedTheme);
+
+  const fieldSelect = document.getElementById('field-select');
+  if (fieldSelect) {
+    fieldSelect.addEventListener('change', (e) => {
+      const fieldId = e.target.value;
+      if (!fieldId) {
+        if (drawnItems) drawnItems.clearLayers();
+        currentDrawnLayer = null;
+        currentBounds = map.getBounds();
+        updateDashboard();
+        return;
+      }
+      
+      const field = allFields.find(f => f.id == fieldId);
+      if (field && field.bounds_json) {
+        try {
+          const bounds = JSON.parse(field.bounds_json);
+          if (drawnItems) drawnItems.clearLayers();
+          
+          const polygon = L.polygon(bounds, { color: '#00ff88', weight: 3, fillOpacity: 0.15 });
+          if (drawnItems) drawnItems.addLayer(polygon);
+          currentDrawnLayer = polygon;
+          
+          const polygonBounds = polygon.getBounds();
+          map.fitBounds(polygonBounds);
+          currentBounds = polygonBounds;
+          
+          updateDashboard();
+        } catch (err) {
+          console.error("Error parsing field bounds:", err);
+        }
+      }
+    });
+  }
+
+  const printDateEl = document.getElementById('print-date');
+  if (printDateEl) {
+  printDateEl.textContent = new Date().toLocaleDateString('ru-RU', {
+  weekday: 'long',
+  year: 'numeric',
+  month: 'long',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit'
+  });
+  }
 });
 
 async function loadFields() {
@@ -60,6 +196,7 @@ async function loadFields() {
  const res = await fetch(`${API_URL}/fields/`);
  if (!res.ok) throw new Error('Failed to load fields');
  const fields = await res.json();
+ allFields = fields;
 
  const select = document.getElementById('field-select');
  if (select) {
@@ -235,6 +372,28 @@ function initMap() {
     drawnItems = new L.FeatureGroup();
     map.addLayer(drawnItems);
 
+    const drawControl = new L.Control.Draw({
+      edit: {
+        featureGroup: drawnItems
+      },
+      draw: false
+    });
+    map.addControl(drawControl);
+
+    map.on(L.Draw.Event.CREATED, function (e) {
+      const layer = e.layer;
+      drawnItems.clearLayers();
+      
+      const fieldSelect = document.getElementById('field-select');
+      if (fieldSelect) fieldSelect.value = '';
+      
+      drawnItems.addLayer(layer);
+      currentDrawnLayer = layer;
+      currentBounds = layer.getBounds();
+      
+      updateDashboard();
+    });
+
     map.on('moveend', () => {
       if (!currentDrawnLayer) {
         currentBounds = map.getBounds();
@@ -268,10 +427,8 @@ window.runAnalysis = async function () {
  if (['infrastructure', 'prediction', 'urban_filter'].includes(currentAnalysisType)) endpoint = '/urban/analyze/';
 
  const fieldSelect = document.getElementById('field-select');
- const saveCheck = document.getElementById('save-result-check');
  
  const fieldId = fieldSelect ? fieldSelect.value : null;
- const saveResult = saveCheck ? saveCheck.checked : false;
  
 
  try {
@@ -281,7 +438,7 @@ window.runAnalysis = async function () {
  body: JSON.stringify({
  bbox,
  field_id: fieldId || null,
- save_result: saveResult,
+ save_result: false,
  analysis_type: currentAnalysisType
  
  })
@@ -305,146 +462,261 @@ window.runAnalysis = async function () {
 }
 
 async function updateDashboard() {
- const countEl = document.getElementById('stats-count');
- const healthEl = document.getElementById('stats-health');
- const weedsEl = document.getElementById('stats-weeds');
- const activityList = document.getElementById('activity-list');
- const summaryEl = document.getElementById('dashboard-summary');
+  const countEl = document.getElementById('stats-count');
+  const healthEl = document.getElementById('stats-health');
+  const weedsEl = document.getElementById('stats-weeds');
+  const activityList = document.getElementById('activity-list');
+  const summaryEl = document.getElementById('dashboard-summary');
 
- if (countEl) countEl.textContent = sessionStats.analysisCount;
+  if (countEl) countEl.textContent = sessionStats.analysisCount;
 
- if (healthEl) {
- const avg = sessionStats.healthScoreCount > 0
- ? (sessionStats.totalHealthScore / sessionStats.healthScoreCount).toFixed(1)
- : '-';
- healthEl.textContent = avg + (avg !== '-' ? '%' : '');
- }
+  if (healthEl) {
+    const avg = sessionStats.healthScoreCount > 0
+      ? (sessionStats.totalHealthScore / sessionStats.healthScoreCount).toFixed(1)
+      : '-';
+    healthEl.textContent = avg + (avg !== '-' ? '%' : '');
+  }
 
- if (weedsEl) weedsEl.textContent = sessionStats.totalWeeds;
+  if (weedsEl) weedsEl.textContent = sessionStats.totalWeeds;
 
- if (activityList) {
- if (sessionStats.activities.length === 0) {
- activityList.innerHTML = '<div style="color: var(--text-muted); text-align: center; margin-top: 2rem;">Здесь появится история ваших действий</div>';
- } else {
- activityList.innerHTML = sessionStats.activities.map(a => `
- <div class="activity-item">
- <div class="activity-icon" style="background: rgba(var(--primary-rgb), 0.1); color: var(--primary);">
- ${getIconForType(a.type)}
- </div>
- <div class="activity-details">
- <div class="activity-title">${a.text}</div>
- <div class="activity-time">${a.time}</div>
- </div>
- </div>
- `).join('');
- }
- }
+  if (activityList) {
+    if (sessionStats.activities.length === 0) {
+      activityList.innerHTML = '<div style="color: var(--text-muted); text-align: center; margin-top: 2rem;">Здесь появится история ваших действий</div>';
+    } else {
+      activityList.innerHTML = sessionStats.activities.map(a => `
+        <div class="activity-item">
+          <div class="activity-icon" style="background: rgba(var(--primary-rgb), 0.1); color: var(--primary);">
+            ${getIconForType(a.type)}
+          </div>
+          <div class="activity-details">
+            <div class="activity-title">${a.text}</div>
+            <div class="activity-time">${a.time}</div>
+          </div>
+        </div>
+      `).join('');
+    }
+  }
 
- if (summaryEl) {
- let exchangeHtml = '';
- try {
- const rateRes = await fetch('https://api.exchangerate-api.com/v4/latest/USD');
- const rateData = await rateRes.json();
- const tjsRate = rateData.rates.TJS || 10.93;
- const rubRate = rateData.rates.RUB || 89.5;
+  if (summaryEl) {
+    let rates = { TJS: 10.93, RUB: 89.5, UZS: 12600, KZT: 450, KGS: 87.5 };
+    let exchangeHtml = '';
+    try {
+      const rateRes = await fetch('https://api.exchangerate-api.com/v4/latest/USD');
+      const rateData = await rateRes.json();
+      if (rateData && rateData.rates) {
+        rates = rateData.rates;
+      }
+      const tjsRate = rates.TJS || 10.93;
+      const rubRate = rates.RUB || 89.5;
 
- exchangeHtml = `
- <div style="display: flex; gap: 1rem;">
- <div class="market-item" style="flex: 1;">
- <div class="market-name"> USD → TJS</div>
- <div class="market-price" style="font-size: 1.2rem; color: #00ff88;">1$ = ${tjsRate.toFixed(2)} TJS</div>
- <div class="market-change up">Нац. банк Таджикистана</div>
- </div>
- <div class="market-item" style="flex: 1;">
- <div class="market-name"> USD → RUB</div>
- <div class="market-price" style="font-size: 1.2rem; color: #4facfe;">1$ = ${rubRate.toFixed(2)} ₽</div>
- <div class="market-change">ЦБ РФ</div>
- </div>
- </div>
- `;
- } catch (e) {
- console.error('Exchange rate API error:', e);
- exchangeHtml = `
- <div class="market-item">
- <div class="market-name"> USD → TJS</div>
- <div class="market-price" style="font-size: 1.2rem; color: #00ff88;">1$ ≈ 10.93 TJS</div>
- <div class="market-change" style="color: var(--text-muted);">Оффлайн данные</div>
- </div>
- `;
- }
+      exchangeHtml = `
+        <div style="display: flex; gap: 1rem;">
+          <div class="market-item" style="flex: 1;">
+            <div class="market-name"> USD → TJS</div>
+            <div class="market-price" style="font-size: 1.2rem; color: #00ff88;">1$ = ${tjsRate.toFixed(2)} TJS</div>
+            <div class="market-change up">Нац. банк Таджикистана</div>
+          </div>
+          <div class="market-item" style="flex: 1;">
+            <div class="market-name"> USD → RUB</div>
+            <div class="market-price" style="font-size: 1.2rem; color: #4facfe;">1$ = ${rubRate.toFixed(2)} ₽</div>
+            <div class="market-change">ЦБ РФ</div>
+          </div>
+        </div>
+      `;
+    } catch (e) {
+      console.error('Exchange rate API error:', e);
+      const tjsRate = rates.TJS || 10.93;
+      exchangeHtml = `
+        <div class="market-item">
+          <div class="market-name"> USD → TJS</div>
+          <div class="market-price" style="font-size: 1.2rem; color: #00ff88;">1$ ≈ ${tjsRate.toFixed(2)} TJS</div>
+          <div class="market-change" style="color: var(--text-muted);">Оффлайн данные</div>
+        </div>
+      `;
+    }
 
- let forecastHtml = '';
- try {
- const weatherRes = await fetch('https://api.open-meteo.com/v1/forecast?latitude=38.56&longitude=68.77&daily=temperature_2m_max,weathercode&timezone=Asia/Dushanbe&forecast_days=4');
- const weatherData = await weatherRes.json();
+    let lat = 38.56;
+    let lon = 68.77;
+    let locationLabel = 'Душанбе';
+    let areaHa = 0;
+    let areaKm2 = 0;
 
- const weatherIcons = {
- 0: '️', 1: '️', 2: '', 3: '️',
- 45: '️', 48: '️',
- 51: '️', 53: '️', 55: '️',
- 61: '️', 63: '️', 65: '️',
- 71: '️', 73: '️', 75: '️',
- 80: '️', 81: '️', 82: '️',
- 95: '️', 96: '️', 99: '️'
- };
+    const fieldSelect = document.getElementById('field-select');
+    if (fieldSelect && fieldSelect.value) {
+      const field = allFields.find(f => f.id == fieldSelect.value);
+      if (field) {
+        lat = parseFloat(field.center_lat) || 38.56;
+        lon = parseFloat(field.center_lon) || 68.77;
+        locationLabel = field.name;
+        areaHa = parseFloat(field.area_hectares) || 0;
+        areaKm2 = areaHa / 100;
+      }
+    } else if (currentBounds) {
+      const center = currentBounds.getCenter();
+      lat = parseFloat(center.lat.toFixed(4));
+      lon = parseFloat(center.lng.toFixed(4));
+      locationLabel = `Шир: ${lat}, Долг: ${lon}`;
 
- forecastHtml = [1, 2, 3].map(i => {
- const date = new Date(weatherData.daily.time[i]);
- const temp = Math.round(weatherData.daily.temperature_2m_max[i]);
- const code = weatherData.daily.weathercode[i];
- const icon = weatherIcons[code] || '️';
- return `
- <div class="forecast-day">
- <div class="forecast-date">${date.toLocaleDateString('ru-RU', { weekday: 'short' })}</div>
- <div class="forecast-icon">${icon}</div>
- <div class="forecast-temp">${temp > 0 ? '+' : ''}${temp}°</div>
- </div>
- `;
- }).join('');
- } catch (e) {
- console.error('Weather API error:', e);
- forecastHtml = '<div style="color: var(--text-muted);">Ошибка загрузки погоды</div>';
- }
+      const latDiff = currentBounds.getNorth() - currentBounds.getSouth();
+      const lonDiff = currentBounds.getEast() - currentBounds.getWest();
+      areaKm2 = latDiff * 111.32 * lonDiff * 111.32 * Math.cos(lat * Math.PI / 180);
+      areaHa = areaKm2 * 100;
+    }
 
- let content = `
- <div style="margin-bottom: 1.5rem;">
- <h4 style="margin: 0 0 0.5rem 0; font-size: 0.9rem; color: var(--text-muted);"> Курс валют</h4>
- ${exchangeHtml}
- </div>
- 
- <div style="margin-bottom: 1.5rem; background: var(--bg-darker); padding: 1rem; border-radius: 12px;">
- <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
- <h4 style="margin: 0; font-size: 0.9rem; color: var(--text-muted);">️ Прогноз погоды</h4>
- <span style="font-size: 0.75rem; color: var(--accent);">Душанбе</span>
- </div>
- <div class="forecast-grid">
- ${forecastHtml}
- </div>
- </div>
- `;
+    let countryName = getCountryByCoords(lat, lon);
 
- if (sessionStats.activities.length > 0) {
- const last = sessionStats.activities[0];
- content += `
- <div style="padding: 1rem; background: rgba(100, 108, 255, 0.1); border-radius: 12px; border: 1px solid rgba(100, 108, 255, 0.2);">
- <h4 style="margin: 0 0 0.5rem 0; font-size: 1rem; color: var(--primary-light);">Последняя активность</h4>
- <p style="margin: 0; font-size: 0.9rem; color: var(--text-main);">${last.text}</p>
- <div style="margin-top: 1rem; display: flex; gap: 8px;">
- <span class="badge badge-info">${last.type}</span>
- <span class="badge badge-warning">${last.time}</span>
- </div>
- </div>
- `;
- } else {
- content += `
- <div style="padding: 2rem; text-align: center; border: 2px dashed var(--border-color); border-radius: 12px; color: var(--text-muted);">
- Нет недавней активности. Начните с анализа карты!
- </div>
- `;
- }
+    try {
+      const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=12&addressdetails=1`, {
+        headers: { 'Accept-Language': 'ru' }
+      });
+      if (geoRes.ok) {
+        const geoData = await geoRes.json();
+        const address = geoData.address || {};
+        const placeName = address.city || address.town || address.village || address.suburb || address.county || address.state || '';
+        if (placeName) {
+          locationLabel = placeName;
+        }
+        if (address.country) {
+          countryName = address.country;
+        }
+      }
+    } catch (e) {
+      console.error("Geocoding error:", e);
+    }
 
- summaryEl.innerHTML = content;
- }
+    // Calculate land price
+    const landPriceConfig = getLandPriceConfig(countryName);
+    const totalCostUsd = areaHa * landPriceConfig.priceUsdPerHa;
+    const localRate = rates[landPriceConfig.currency] || 1.0;
+    const totalCostLocal = totalCostUsd * localRate;
+
+    // Update dashboard stat card
+    const priceEl = document.getElementById('stats-land-price');
+    if (priceEl) {
+      if (totalCostUsd > 0) {
+        if (landPriceConfig.currency !== 'USD') {
+          priceEl.innerHTML = `<span style="font-size: 1.5rem; font-weight: 700;">${formatMoney(totalCostUsd, "$")}</span><div style="font-size: 0.8rem; color: var(--accent-orange); font-weight: 500; margin-top: 2px;">≈ ${formatMoney(totalCostLocal, landPriceConfig.symbol)}</div>`;
+        } else {
+          priceEl.textContent = formatMoney(totalCostUsd, "$");
+        }
+      } else {
+        priceEl.textContent = "-";
+      }
+    }
+
+    let valuationHtml = '';
+    if (areaHa > 0) {
+      const usdPerHaFormatted = formatMoney(landPriceConfig.priceUsdPerHa, "$");
+      const totalUsdFormatted = formatMoney(totalCostUsd, "$");
+      const totalLocalFormatted = formatMoney(totalCostLocal, landPriceConfig.symbol);
+
+      valuationHtml = `
+        <div style="margin-bottom: 1.5rem; background: var(--card-bg-light); border: 1px solid var(--border-color); padding: 1.2rem; border-radius: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+            <h4 style="margin: 0; font-size: 0.95rem; color: var(--text-main); font-weight: 600;">💰 Оценка стоимости земли</h4>
+            <span style="font-size: 1.2rem;" title="${countryName}">${landPriceConfig.flag}</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 0.6rem; font-size: 0.85rem;">
+            <div style="display: flex; justify-content: space-between;">
+              <span style="color: var(--text-muted);">Регион/Страна:</span>
+              <span style="font-weight: 500; color: var(--text-main);">${countryName}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+              <span style="color: var(--text-muted);">Площадь:</span>
+              <span style="font-weight: 500; color: var(--text-main);">${areaKm2.toFixed(3)} км² (${areaHa.toFixed(2)} га)</span>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+              <span style="color: var(--text-muted);">Средняя цена:</span>
+              <span style="font-weight: 500; color: var(--accent-green);">${usdPerHaFormatted} / га</span>
+            </div>
+            <div style="border-top: 1px solid var(--border-color); margin-top: 0.4rem; padding-top: 0.6rem; display: flex; justify-content: space-between; align-items: baseline;">
+              <span style="color: var(--text-main); font-weight: 600;">Итоговая оценка:</span>
+              <div style="text-align: right;">
+                <div style="font-size: 1.15rem; font-weight: 700; color: #00ff88;">${totalUsdFormatted}</div>
+                ${landPriceConfig.currency !== 'USD' ? `<div style="font-size: 0.85rem; color: var(--accent-orange); font-weight: 500; margin-top: 2px;">≈ ${totalLocalFormatted}</div>` : ''}
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    let forecastHtml = '';
+    try {
+      const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=temperature_2m_max,weathercode&timezone=auto&forecast_days=4`);
+      const weatherData = await weatherRes.json();
+
+      const weatherIcons = {
+        0: '☀️', 1: '🌤️', 2: '⛅', 3: '☁️',
+        45: '🌫️', 48: '🌫️',
+        51: '🌧️', 53: '🌧️', 55: '🌧️',
+        61: '🌧️', 63: '🌧️', 65: '🌧️',
+        71: '🌨️', 73: '🌨️', 75: '🌨️',
+        80: '🌧️', 81: '🌧️', 82: '🌧️',
+        95: '⛈️', 96: '⛈️', 99: '⛈️'
+      };
+
+      forecastHtml = [1, 2, 3].map(i => {
+        const date = new Date(weatherData.daily.time[i]);
+        const temp = Math.round(weatherData.daily.temperature_2m_max[i]);
+        const code = weatherData.daily.weathercode[i];
+        const icon = weatherIcons[code] || '☀️';
+        return `
+          <div class="forecast-day">
+            <div class="forecast-date">${date.toLocaleDateString('ru-RU', { weekday: 'short' })}</div>
+            <div class="forecast-icon">${icon}</div>
+            <div class="forecast-temp">${temp > 0 ? '+' : ''}${temp}°</div>
+          </div>
+        `;
+      }).join('');
+    } catch (e) {
+      console.error('Weather API error:', e);
+      forecastHtml = '<div style="color: var(--text-muted);">Ошибка загрузки погоды</div>';
+    }
+
+    let content = `
+      ${valuationHtml}
+      
+      <div style="margin-bottom: 1.5rem;">
+        <h4 style="margin: 0 0 0.5rem 0; font-size: 0.9rem; color: var(--text-muted);">Курс валют</h4>
+        ${exchangeHtml}
+      </div>
+      
+      <div style="margin-bottom: 1.5rem; background: var(--bg-darker); padding: 1rem; border-radius: 12px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+          <h4 style="margin: 0; font-size: 0.9rem; color: var(--text-muted);">Прогноз погоды</h4>
+          <a href="https://www.google.com/search?q=${encodeURIComponent('погода ' + locationLabel)}" target="_blank" style="font-size: 0.75rem; color: var(--accent); text-decoration: underline;" title="Открыть в Google Weather">
+            ${locationLabel} 🔍
+          </a>
+        </div>
+        <div class="forecast-grid">
+          ${forecastHtml}
+        </div>
+      </div>
+    `;
+
+    if (sessionStats.activities.length > 0) {
+      const last = sessionStats.activities[0];
+      content += `
+        <div style="padding: 1rem; background: rgba(100, 108, 255, 0.1); border-radius: 12px; border: 1px solid rgba(100, 108, 255, 0.2);">
+          <h4 style="margin: 0 0 0.5rem 0; font-size: 1rem; color: var(--primary-light);">Последняя активность</h4>
+          <p style="margin: 0; font-size: 0.9rem; color: var(--text-main);">${last.text}</p>
+          <div style="margin-top: 1rem; display: flex; gap: 8px;">
+            <span class="badge badge-info">${last.type}</span>
+            <span class="badge badge-warning">${last.time}</span>
+          </div>
+        </div>
+      `;
+    } else {
+      content += `
+        <div style="padding: 2rem; text-align: center; border: 2px dashed var(--border-color); border-radius: 12px; color: var(--text-muted);">
+          Нет недавней активности. Начните с анализа карты!
+        </div>
+      `;
+    }
+
+    summaryEl.innerHTML = content;
+  }
 }
 
 function getIconForType(type) {
@@ -777,22 +1049,25 @@ function renderResult(data) {
 
  const bottomCrops = document.getElementById('map-bottom-crops-container');
  if (bottomCrops) {
- if (resData && (resData.environment || data.environment) && (resData.environment || data.environment).crops) {
- bottomCrops.innerHTML = renderCropsBottom((resData.environment || data.environment).crops);
- } else {
+  const env = resData ? (resData.environment || data.environment) : (data ? data.environment : null);
+  if (env && env.crops) {
+    bottomCrops.innerHTML = renderCropsBottom(env.crops, env.country);
+  } else {
  bottomCrops.innerHTML = '';
  }
  }
 }
 
-function renderCropsBottom(crops) {
- if (!crops || crops.length === 0) return '';
+function renderCropsBottom(crops, country) {
+  if (!crops || crops.length === 0) return '';
 
- let html = `
- <div style="padding: 1rem; border-top: 1px solid var(--border-color); background: rgba(0,0,0,0.2);">
- <h4 style="margin: 0 0 1rem 0; font-size: 0.95rem; display: flex; align-items: center; gap: 8px;">
- Рекомендуемые культуры
- </h4>
+  const title = country ? `Рекомендуемые культуры (${country})` : 'Рекомендуемые культуры';
+
+  let html = `
+  <div style="padding: 1rem; border-top: 1px solid var(--border-color); background: rgba(0,0,0,0.2);">
+  <h4 style="margin: 0 0 1rem 0; font-size: 0.95rem; display: flex; align-items: center; gap: 8px;">
+  ${title}
+  </h4>
  <div style="display: flex; gap: 1rem; overflow-x: auto; padding-bottom: 5px;">
  `;
 
