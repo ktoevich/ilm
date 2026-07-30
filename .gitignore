@@ -25,3 +25,5 @@ __pycache__/
 # Databases
 *.sqlite3
 *.db
+venv/
+.venv/

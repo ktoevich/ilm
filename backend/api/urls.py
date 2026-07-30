@@ -1,4 +1,5 @@
 from django.urls import path
+from .auth_views import RegisterView, LoginView, UserMeView, LogoutView
 from .views import (
     AnalyzeView,
     FieldListCreateView, FieldDetailView,
@@ -11,6 +12,11 @@ from .views import (
 )
 
 urlpatterns = [
+    path('auth/register/', RegisterView.as_view(), name='auth-register'),
+    path('auth/login/', LoginView.as_view(), name='auth-login'),
+    path('auth/me/', UserMeView.as_view(), name='auth-me'),
+    path('auth/logout/', LogoutView.as_view(), name='auth-logout'),
+
     path('analyze/', AnalyzeView.as_view(), name='analyze'),
     path('urban/analyze/', UrbanAnalyzeView.as_view(), name='urban-analyze'),
 
