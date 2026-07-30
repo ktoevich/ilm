@@ -8,6 +8,7 @@
  <link rel="stylesheet" href="style.css" />
  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
  integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+ <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
 
  <style>
  body::before {
@@ -23,102 +24,103 @@
  z-index: -1;
  }
 
- .card,
- .stat-card,
- .sidebar {
- backdrop-filter: blur(10px);
- background: rgba(30, 30, 30, 0.6);
- border: 1px solid rgba(255, 255, 255, 0.05);
- box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
- }
+  .card,
+  .stat-card,
+  .sidebar {
+  backdrop-filter: blur(10px);
+  background: var(--card-glass-bg);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+  }
 
- .env-card {
- background: rgba(255, 255, 255, 0.05);
- border-radius: 8px;
- padding: 10px;
- text-align: center;
- border: 1px solid rgba(255, 255, 255, 0.08);
- }
+  .env-card {
+  background: var(--glass-bg);
+  border-radius: 8px;
+  padding: 10px;
+  text-align: center;
+  border: 1px solid var(--glass-border);
+  }
 
- .env-icon {
- display: none !important;
- }
+  .env-icon {
+  display: none !important;
+  }
 
- .env-val {
- font-weight: 600;
- font-size: 1.1rem;
- color: #e0e0e0;
- }
+  .env-val {
+  font-weight: 600;
+  font-size: 1.1rem;
+  color: var(--text-main);
+  }
 
- .env-label {
- font-size: 0.75rem;
- color: #888;
- }
+  .env-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  }
 
- .market-ticker {
- display: flex;
- gap: 10px;
- overflow-x: auto;
- padding-bottom: 5px;
- }
+  .market-ticker {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 5px;
+  }
 
- .market-item {
- min-width: 100px;
- padding: 10px;
- background: rgba(255, 255, 255, 0.05);
- border-radius: 10px;
- border: 1px solid rgba(255, 255, 255, 0.05);
- }
+  .market-item {
+  min-width: 100px;
+  padding: 10px;
+  background: var(--glass-bg);
+  border-radius: 10px;
+  border: 1px solid var(--glass-border);
+  }
 
- .market-name {
- font-size: 0.75rem;
- color: #888;
- margin-bottom: 4px;
- }
+  .market-name {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  }
 
- .market-price {
- font-weight: 600;
- font-size: 0.9rem;
- }
+  .market-price {
+  font-weight: 600;
+  font-size: 0.9rem;
+  }
 
- .market-change {
- font-size: 0.7rem;
- margin-top: 2px;
- }
+  .market-change {
+  font-size: 0.7rem;
+  margin-top: 2px;
+  }
 
- .market-change.up {
- color: #00ff88;
- }
+  .market-change.up {
+  color: #00ff88;
+  }
 
- .market-change.down {
- color: #ff4757;
- }
+  .market-change.down {
+  color: #ff4757;
+  }
 
- .forecast-grid {
- display: grid;
- grid-template-columns: 1fr 1fr 1fr;
- gap: 10px;
- }
+  .forecast-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+  }
 
- .forecast-day {
- text-align: center;
- padding: 10px;
- background: rgba(0, 0, 0, 0.2);
- border-radius: 8px;
- }
+  .forecast-day {
+  text-align: center;
+  padding: 10px;
+  background: var(--glass-bg);
+  border-radius: 8px;
+  border: 1px solid var(--glass-border);
+  }
 
- .forecast-date {
- font-size: 0.75rem;
- color: #888;
- }
+  .forecast-date {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  }
 
- .forecast-icon {
- display: none !important;
- }
+  .forecast-icon {
+  display: none !important;
+  }
 
- .forecast-temp {
- font-weight: 600;
- }
+  .forecast-temp {
+  font-weight: 600;
+  }
  </style>
 </head>
 
@@ -139,7 +141,18 @@
  <span class="nav-item-icon">️</span>
  <span>Карта & Анализ</span>
  </div>
+<<<<<<< HEAD
  <button class="btn btn-new-button">новая кнопка</button>
+=======
+
+ <div class="nav-section-title">Оформление</div>
+ <div style="padding: 0 16px 16px;">
+   <select id="theme-select" class="form-select" style="width: 100%;" onchange="changeTheme(this.value)">
+     <option value="dark">Темная тема</option>
+     <option value="light">Светлая тема</option>
+   </select>
+ </div>
+>>>>>>> 49e9c426bff0c3d9a8551bc941077e859fa16c57
  </nav>
 
   <div class="user-sidebar-card" id="user-sidebar-card">
@@ -190,13 +203,21 @@
  </div>
  </div>
 
- <div class="stat-card">
- <div class="stat-icon" style="background: rgba(23, 162, 184, 0.1); color: #17a2b8;">️</div>
- <div class="stat-info">
- <span class="stat-label">Время сессии</span>
- <span class="stat-value" id="stats-time">00:00</span>
- </div>
- </div>
+  <div class="stat-card">
+  <div class="stat-icon" style="background: rgba(23, 162, 184, 0.1); color: #17a2b8;">️</div>
+  <div class="stat-info">
+  <span class="stat-label">Время сессии</span>
+  <span class="stat-value" id="stats-time">00:00</span>
+  </div>
+  </div>
+
+  <div class="stat-card">
+  <div class="stat-icon" style="background: rgba(255, 149, 0, 0.1); color: #ff9500;">💰</div>
+  <div class="stat-info">
+  <span class="stat-label">Стоимость земли</span>
+  <span class="stat-value" id="stats-land-price">-</span>
+  </div>
+  </div>
  </div>
 
  <div class="dashboard-charts-row"
@@ -264,7 +285,28 @@
  </div>
 
  <div class="analysis-panel">
+<<<<<<< HEAD
 
+=======
+ <div class="card">
+ <h3 style="margin-bottom: 1rem; font-size: 1rem;"> Привязка к полю</h3>
+ <select class="form-select" id="field-select">
+ <option value="">Загрузка полей...</option>
+ </select>
+ <button class="btn btn-outline" onclick="toggleNewFieldForm()" style="width: 100%; margin-top: 0.5rem; font-size: 0.85rem;">
+ ➕ Создать новое поле
+ </button>
+
+ <div id="save-field-form" style="margin-top: 0.75rem; display: none;">
+ <input type="text" id="new-field-name" class="form-select" placeholder="Название поля"
+ style="margin-bottom: 0.5rem;">
+ <button class="btn btn-primary" onclick="saveFieldFromMap()" style="width: 100%; font-size: 0.85rem;">
+ Сохранить поле
+ </button>
+ </div>
+
+ </div>
+>>>>>>> 49e9c426bff0c3d9a8551bc941077e859fa16c57
 
  <div id="error-alert" class="alert alert-danger hidden">
  <span class="alert-icon"></span>
@@ -289,6 +331,7 @@
  </main>
  </div>
 
+<<<<<<< HEAD
   <!-- Auth Modal Overlay -->
   <div id="auth-modal" class="auth-overlay hidden">
     <div class="auth-card">
@@ -302,6 +345,11 @@
         <button type="button" class="auth-tab active" id="tab-login" onclick="switchAuthTab('login')">Вход</button>
         <button type="button" class="auth-tab" id="tab-register" onclick="switchAuthTab('register')">Регистрация</button>
       </div>
+=======
+ <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+ integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+ <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+>>>>>>> 49e9c426bff0c3d9a8551bc941077e859fa16c57
 
       <!-- Login Form -->
       <form id="form-login" onsubmit="handleLoginSubmit(event)" class="auth-form">

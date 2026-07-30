@@ -1,9 +1,42 @@
 import io
 import time
+import os
 import numpy as np
 import cv2
 import base64
+import torch
+import torch.nn as nn
+from torchvision import models, transforms
+from PIL import Image
+from django.conf import settings
 from utils.tiles import fetch_satellite_image
+
+_SOIL_MODEL = None
+_SOIL_MODEL_DEVICE = None
+
+def load_soil_model():
+    global _SOIL_MODEL, _SOIL_MODEL_DEVICE
+    if _SOIL_MODEL is not None:
+        return _SOIL_MODEL, _SOIL_MODEL_DEVICE
+    
+    _SOIL_MODEL_DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = models.resnet18()
+    num_ftrs = model.fc.in_features
+    # 3 classes: high_fertility, low_fertility, medium_fertility
+    model.fc = nn.Linear(num_ftrs, 3)
+    
+    model_path = os.path.join(settings.BASE_DIR, "..", "ai model", "soil_model.pth")
+    if not os.path.exists(model_path):
+        model_path = os.path.join(os.path.dirname(__file__), "..", "..", "ai model", "soil_model.pth")
+        
+    state_dict = torch.load(model_path, map_location=_SOIL_MODEL_DEVICE)
+    model.load_state_dict(state_dict)
+    model = model.to(_SOIL_MODEL_DEVICE)
+    model.eval()
+    
+    _SOIL_MODEL = model
+    return _SOIL_MODEL, _SOIL_MODEL_DEVICE
+
 
 def generate_mock_overlay(bbox):
     try:
@@ -32,7 +65,6 @@ def generate_mock_overlay(bbox):
         
         output_rgba[:] = c_ds
         output_rgba[full_water_mask > 0] = c_wt
-        H = hsv[:,:,0]; S = hsv[:,:,1]; V = hsv[:,:,2]
         is_land = (full_water_mask == 0)
         
         gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
@@ -44,36 +76,101 @@ def generate_mock_overlay(bbox):
         m_mountains = is_land & (blur_mag > 60)
         output_rgba[m_mountains] = c_mt
         
-        fertility_mask = is_land & ~m_mountains
+        # Load the PyTorch AI model
+        model, device = load_soil_model()
         
-        mask_vh = (H > 35) & (H < 85) & (S > 80) & (V > 30) & fertility_mask
-        output_rgba[mask_vh] = c_v_high
-        mask_h = (H > 30) & (H < 90) & (S > 40) & (V > 40) & fertility_mask & ~mask_vh
-        output_rgba[mask_h] = c_high
-        mask_m = (H > 15) & (H < 35) & (S > 20) & fertility_mask & ~(mask_vh | mask_h)
-        output_rgba[mask_m] = c_mod
-        mask_l = (H > 10) & (H < 22) & (S > 10) & fertility_mask & ~(mask_vh | mask_h | mask_m)
-        output_rgba[mask_l] = c_low
+        # We divide the image into grid cells to perform local fertility classification
+        grid_size = 10
+        CLASS_NAMES = ['high_fertility', 'low_fertility', 'medium_fertility']
+        
+        # Prepare transforms
+        preprocess = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
+        
+        crops = []
+        cell_coords = []
+        
+        for i in range(grid_size):
+            for j in range(grid_size):
+                y1 = int(i * height / grid_size)
+                y2 = int((i + 1) * height / grid_size)
+                x1 = int(j * width / grid_size)
+                x2 = int((j + 1) * width / grid_size)
+                
+                if y2 - y1 <= 0 or x2 - x1 <= 0:
+                    continue
+                
+                # Check if this cell is mostly water/mountain
+                cell_water = np.count_nonzero(full_water_mask[y1:y2, x1:x2])
+                cell_mountain = np.count_nonzero(m_mountains[y1:y2, x1:x2])
+                cell_total = (y2 - y1) * (x2 - x1)
+                
+                # If the cell is mostly land, evaluate with model
+                if (cell_water + cell_mountain) / cell_total <= 0.5:
+                    crop_rgb = image_rgb[y1:y2, x1:x2]
+                    crop_img = Image.fromarray(crop_rgb)
+                    tensor = preprocess(crop_img)
+                    crops.append(tensor)
+                    cell_coords.append((y1, y2, x1, x2))
+        
+        # Run batched prediction
+        if crops:
+            batch_tensor = torch.stack(crops).to(device)
+            with torch.no_grad():
+                outputs = model(batch_tensor)
+                probabilities = torch.nn.functional.softmax(outputs, dim=1)
+                confidences, class_indices = torch.max(probabilities, dim=1)
+            
+            for idx, (y1, y2, x1, x2) in enumerate(cell_coords):
+                class_idx = class_indices[idx].item()
+                conf = confidences[idx].item()
+                pred_class = CLASS_NAMES[class_idx]
+                
+                # Map predicted class to color scheme
+                if pred_class == 'high_fertility':
+                    # If high fertility with high confidence, classify as very high
+                    if conf > 0.75:
+                        color = c_v_high
+                    else:
+                        color = c_high
+                elif pred_class == 'medium_fertility':
+                    color = c_mod
+                else: # low_fertility
+                    # If low fertility with low confidence, classify as desert
+                    if conf < 0.7:
+                        color = c_ds
+                    else:
+                        color = c_low
+                
+                # Paint only the land pixels in this cell
+                cell_is_land = is_land[y1:y2, x1:x2] & ~m_mountains[y1:y2, x1:x2]
+                cell_slice = output_rgba[y1:y2, x1:x2]
+                cell_slice[cell_is_land] = color
+                output_rgba[y1:y2, x1:x2] = cell_slice
 
+        # Count actual pixels colored in each category
+        vh_c = np.count_nonzero(np.all(output_rgba == c_v_high, axis=-1))
+        h_c = np.count_nonzero(np.all(output_rgba == c_high, axis=-1))
+        m_c = np.count_nonzero(np.all(output_rgba == c_mod, axis=-1))
+        l_c = np.count_nonzero(np.all(output_rgba == c_low, axis=-1))
+        mt_c = np.count_nonzero(np.all(output_rgba == c_mt, axis=-1))
+        wt_c = np.count_nonzero(np.all(output_rgba == c_wt, axis=-1))
+        ds_c = np.count_nonzero(np.all(output_rgba == c_ds, axis=-1))
+        
         total_pixels = height * width
-        vh_c = np.count_nonzero(mask_vh)
-        h_c = np.count_nonzero(mask_h)
-        m_c = np.count_nonzero(mask_m)
-        l_c = np.count_nonzero(mask_l)
-        mt_c = np.count_nonzero(m_mountains)
-        wt_c = np.count_nonzero(full_water_mask)
         
-        ds_c = total_pixels - (vh_c + h_c + m_c + l_c + mt_c + wt_c)
-
         stats = {
-            "very_high": (vh_c / total_pixels) * 100,
-            "high": (h_c / total_pixels) * 100,
-            "moderate": (m_c / total_pixels) * 100,
-            "low": (l_c / total_pixels) * 100,
-            "mountains": (mt_c / total_pixels) * 100,
-            "water": (wt_c / total_pixels) * 100,
-            "desert": (ds_c / total_pixels) * 100,
-            "analysis_method": "Heuristic (HSV + Edge)"
+            "very_high": float(vh_c) / total_pixels * 100,
+            "high": float(h_c) / total_pixels * 100,
+            "moderate": float(m_c) / total_pixels * 100,
+            "low": float(l_c) / total_pixels * 100,
+            "mountains": float(mt_c) / total_pixels * 100,
+            "water": float(wt_c) / total_pixels * 100,
+            "desert": float(ds_c) / total_pixels * 100,
+            "analysis_method": "AI Model (ResNet-18)"
         }
 
         output_bgra = cv2.cvtColor(output_rgba, cv2.COLOR_RGBA2BGRA)
@@ -83,6 +180,9 @@ def generate_mock_overlay(bbox):
         return f"data:image/png;base64,{png_base64}", actual_bounds, stats
         
     except Exception as e:
+        import traceback
+        print(f"Error in generate_mock_overlay: {e}")
+        traceback.print_exc()
         return None, None, None
 
 
@@ -457,6 +557,58 @@ def predict_development(bbox):
         return None
 
 
+def get_allowed_crops_for_country(country_name):
+    c = country_name.lower().strip()
+    # 1. Uzbekistan / Central Asia
+    if any(x in c for x in ["uzbek", "узбек", "tadj", "тадж", "turkm", "туркм", "kyrgy", "кирг", "таджик", "киргиз"]):
+        return [
+            "Хлопок", "Пшеница", "Виноград", "Томаты", "Люцерна", "Кукуруза", "Рис", 
+            "Дыня", "Арбуз", "Персик", "Абрикос", "Гранат", "Грецкий орех", "Тыква",
+            "Нут", "Арахис", "Перец", "Баклажаны", "Огурцы", "Слива", "Черешня"
+        ]
+    # 2. Kazakhstan
+    elif "kazakh" in c or "казах" in c:
+        return [
+            "Пшеница", "Ячмень", "Подсолнечник", "Лен", "Кукуруза", "Соя", "Сахарная свекла", 
+            "Картофель", "Капуста", "Морковь", "Гречиха", "Овес", "Рожь", "Фасоль", "Тыква"
+        ]
+    # 3. Russia / Belarus / Ukraine
+    elif any(x in c for x in ["russia", "росси", "belarus", "беларус", "ukrain", "украин"]):
+        return [
+            "Пшеница", "Картофель", "Подсолнечник", "Кукуруза", "Соя", "Лен", "Капуста", 
+            "Морковь", "Яблоня", "Сахарная свекла", "Гречиха", "Овес", "Рожь", "Клубника", 
+            "Лук", "Чеснок", "Груша", "Слива", "Вишня", "Черешня", "Тыква", "Кабачок", "Фасоль"
+        ]
+    return None
+
+def get_country_by_coords(lat, lon):
+    import requests
+    headers = {
+        'User-Agent': 'FavorableSoilApp/1.0',
+        'Accept-Language': 'ru'
+    }
+    try:
+        url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=5&addressdetails=1"
+        res = requests.get(url, headers=headers, timeout=3)
+        if res.status_code == 200:
+            address = res.json().get('address', {})
+            country = address.get('country', '')
+            if country:
+                return country
+    except Exception as e:
+        print(f"Error reverse geocoding in python: {e}")
+        
+    # Coordinate fallback
+    if 37.0 <= lat <= 46.0 and 59.0 <= lon <= 74.0:
+        return "Узбекистан"
+    elif 45.0 <= lat <= 56.0 and 50.0 <= lon <= 88.0:
+        return "Казахстан"
+    elif 41.0 <= lat <= 82.0 and 19.0 <= lon <= 170.0:
+        return "Россия"
+    
+    return "Выбранная местность"
+
+
 def analyze_environment(bbox):
     import random
     import requests
@@ -464,6 +616,8 @@ def analyze_environment(bbox):
     min_lon, min_lat, max_lon, max_lat = bbox
     center_lon = (min_lon + max_lon) / 2
     center_lat = (min_lat + max_lat) / 2
+    
+    country_name = get_country_by_coords(center_lat, center_lon)
     
     temp = 15.0
     humidity = 60
@@ -501,6 +655,7 @@ def analyze_environment(bbox):
     soil_moisture = random.randint(15, 45) 
     
     return {
+        "country": country_name,
         "weather": {
             "temp": temp,
             "condition": condition,
@@ -847,10 +1002,16 @@ CROP_DATABASE = [
 def recommend_crops(env_data):
     soil = env_data['soil_chemistry']
     weather = env_data['weather']
+    country = env_data.get('country', '')
+    
+    allowed_crops = get_allowed_crops_for_country(country)
     
     recommendations = []
     
     for crop in CROP_DATABASE:
+        if allowed_crops is not None and crop['name'] not in allowed_crops:
+            continue
+            
         score = 0
         reasons = []
         
