@@ -2,7 +2,7 @@
 <html lang="ru">
 
 <head>
- <meta charset="UTF-8" />
+ <meta charset="UTF-8"/>
  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
  <title>Favorable Soil</title>
  <link rel="stylesheet" href="style.css" />
@@ -139,12 +139,22 @@
  <span class="nav-item-icon">️</span>
  <span>Карта & Анализ</span>
  </div>
+ <button class="btn btn-new-button">новая кнопка</button>
  </nav>
 
- <div
- style="margin-top: auto; padding: 1rem; border-top: 1px solid var(--border-color); font-size: 0.75rem; color: var(--text-muted);">
- </div>
- </aside>
+  <div class="user-sidebar-card" id="user-sidebar-card">
+    <div class="user-info-row">
+      <div class="user-avatar" id="user-avatar">👤</div>
+      <div class="user-details">
+        <div class="user-name-text" id="user-name-text">Гость</div>
+        <div class="user-email-text" id="user-email-text">Требуется вход</div>
+      </div>
+    </div>
+    <button class="btn btn-outline btn-auth-toggle" id="btn-auth-action" onclick="handleAuthAction()">
+      🔐 Войти
+    </button>
+  </div>
+  </aside>
 
  <main class="main-content">
  <div id="page-dashboard" class="page-section hidden">
@@ -229,7 +239,7 @@
  <div class="map-wrapper">
  <div id="loading-overlay" class="loading-overlay hidden">
  <div class="spinner"></div>
- <p>Обработка спутниковых снимков...</p>
+ <p id="loading-text">Обработка спутниковых снимков...</p>
  </div>
  <div id="map" style="width: 100%; height: 100%; min-height: 500px;"></div>
  </div>
@@ -238,7 +248,7 @@
  <select id="analysis-type-select" class="form-select" style="min-width: 200px; flex: 1;"
  onchange="setAnalysisType(this.value)">
  <option value="fertility"> Плодородие</option>
- <option value="ndvi"> NDVI</option>
+ <option value="ndvi">Качество жизни почвы</option>
  <option value="weeds"> Сорняки</option>
  <option value="infrastructure">️ Инфраструктура</option>
  <option value="prediction">️ Предсказание застройки</option>
@@ -254,24 +264,7 @@
  </div>
 
  <div class="analysis-panel">
- <div class="card">
- <h3 style="margin-bottom: 1rem; font-size: 1rem;"> Привязка к полю</h3>
- <select class="form-select" id="field-select">
- <option value="">Загрузка полей...</option>
- </select>
 
- <div id="save-field-form" style="margin-top: 0.75rem; display: none;">
- <input type="text" id="new-field-name" class="form-select" placeholder="Название поля"
- style="margin-bottom: 0.5rem;">
- <button class="btn btn-primary" onclick="saveFieldFromMap()" style="width: 100%; font-size: 0.85rem;">
- Сохранить поле
- </button>
- </div>
- <label style="display: flex; align-items: center; gap: 8px; margin-top: 0.75rem; font-size: 0.9rem;">
- <input type="checkbox" id="save-result-check">
- Сохранить результат
- </label>
- </div>
 
  <div id="error-alert" class="alert alert-danger hidden">
  <span class="alert-icon"></span>
@@ -283,7 +276,7 @@
  <div class="legend-container" id="legend-container">
  <h3 class="legend-title">Плодородие</h3>
  <div class="legend-items" id="legend-items">
- <div style="color: var(--text-muted); font-size: 0.875rem;">Сделайте анализ для отображения плодородия
+ <div style="color: var(--text-muted); font-size: 0.875rem;">Сделайте анализ для отображения полей
  </div>
  </div>
  </div>
@@ -296,9 +289,61 @@
  </main>
  </div>
 
- <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
- integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <!-- Auth Modal Overlay -->
+  <div id="auth-modal" class="auth-overlay hidden">
+    <div class="auth-card">
+      <div class="auth-header">
+        <div class="auth-logo">🌱 Favorable Soil</div>
+        <h2>Авторизация в системе</h2>
+        <p class="auth-subtitle">Войдите с помощью почты для выполнения анализа</p>
+      </div>
+      
+      <div class="auth-tabs">
+        <button type="button" class="auth-tab active" id="tab-login" onclick="switchAuthTab('login')">Вход</button>
+        <button type="button" class="auth-tab" id="tab-register" onclick="switchAuthTab('register')">Регистрация</button>
+      </div>
 
- <script src="script.js"></script>
+      <!-- Login Form -->
+      <form id="form-login" onsubmit="handleLoginSubmit(event)" class="auth-form">
+        <div class="form-group">
+          <label for="login-email">Электронная почта</label>
+          <input type="email" id="login-email" class="form-input" placeholder="user@example.com" required autocomplete="email" />
+        </div>
+        <div class="form-group">
+          <label for="login-password">Пароль</label>
+          <input type="password" id="login-password" class="form-input" placeholder="••••••••" required autocomplete="current-password" />
+        </div>
+        <div id="auth-login-error" class="auth-error-msg hidden"></div>
+        <button type="submit" class="btn btn-primary auth-submit-btn" id="btn-login-submit">
+          <span>Войти в систему</span>
+        </button>
+      </form>
+
+      <!-- Register Form -->
+      <form id="form-register" onsubmit="handleRegisterSubmit(event)" class="auth-form hidden">
+        <div class="form-group">
+          <label for="reg-name">Ваше имя (необязательно)</label>
+          <input type="text" id="reg-name" class="form-input" placeholder="Алексей" autocomplete="name" />
+        </div>
+        <div class="form-group">
+          <label for="reg-email">Электронная почта</label>
+          <input type="email" id="reg-email" class="form-input" placeholder="user@example.com" required autocomplete="email" />
+        </div>
+        <div class="form-group">
+          <label for="reg-password">Пароль</label>
+          <input type="password" id="reg-password" class="form-input" placeholder="Минимум 6 символов" required minlength="6" autocomplete="new-password" />
+        </div>
+        <div id="auth-reg-error" class="auth-error-msg hidden"></div>
+        <button type="submit" class="btn btn-primary auth-submit-btn" id="btn-reg-submit">
+          <span>Зарегистрироваться</span>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+  <script src="script.js"></script>
 </body>
 </html>

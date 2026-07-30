@@ -1,4 +1,256 @@
-const API_URL = "/_/backend/api/v1/get_fields";
+const API_URL = "http://127.0.0.1:8000/api";
+
+// --- AUTHENTICATION STATE ---
+let authToken = localStorage.getItem('auth_token') || null;
+let currentUser = null;
+try {
+  const savedUser = localStorage.getItem('auth_user');
+  if (savedUser) currentUser = JSON.parse(savedUser);
+} catch (e) {
+  currentUser = null;
+}
+
+function getAuthHeaders(extraHeaders = {}) {
+  const headers = {
+    'Content-Type': 'application/json',
+    ...extraHeaders
+  };
+  if (authToken) {
+    headers['Authorization'] = `Token ${authToken}`;
+  }
+  return headers;
+}
+
+function updateAuthUI() {
+  const nameEl = document.getElementById('user-name-text');
+  const emailEl = document.getElementById('user-email-text');
+  const btnEl = document.getElementById('btn-auth-action');
+  const avatarEl = document.getElementById('user-avatar');
+
+  if (authToken && currentUser) {
+    if (nameEl) nameEl.textContent = currentUser.first_name || currentUser.username || 'Пользователь';
+    if (emailEl) emailEl.textContent = currentUser.email || '';
+    if (btnEl) btnEl.innerHTML = '🚪 Выйти';
+    if (avatarEl) {
+      const char = (currentUser.first_name || currentUser.email || 'U')[0].toUpperCase();
+      avatarEl.textContent = char;
+    }
+    hideAuthModal();
+  } else {
+    if (nameEl) nameEl.textContent = 'Гость';
+    if (emailEl) emailEl.textContent = 'Требуется вход';
+    if (btnEl) btnEl.innerHTML = '🔐 Войти';
+    if (avatarEl) avatarEl.textContent = '👤';
+  }
+}
+
+function showAuthModal(defaultTab = 'login') {
+  const modal = document.getElementById('auth-modal');
+  if (modal) {
+    modal.classList.remove('hidden');
+    switchAuthTab(defaultTab);
+  }
+}
+
+function hideAuthModal() {
+  const modal = document.getElementById('auth-modal');
+  if (modal) {
+    modal.classList.add('hidden');
+  }
+}
+
+function switchAuthTab(tab) {
+  const loginForm = document.getElementById('form-login');
+  const regForm = document.getElementById('form-register');
+  const tabLogin = document.getElementById('tab-login');
+  const tabReg = document.getElementById('tab-register');
+
+  const errLogin = document.getElementById('auth-login-error');
+  const errReg = document.getElementById('auth-reg-error');
+  if (errLogin) errLogin.classList.add('hidden');
+  if (errReg) errReg.classList.add('hidden');
+
+  if (tab === 'login') {
+    if (loginForm) loginForm.classList.remove('hidden');
+    if (regForm) regForm.classList.add('hidden');
+    if (tabLogin) tabLogin.classList.add('active');
+    if (tabReg) tabReg.classList.remove('active');
+  } else {
+    if (loginForm) loginForm.classList.add('hidden');
+    if (regForm) regForm.classList.remove('hidden');
+    if (tabLogin) tabLogin.classList.remove('active');
+    if (tabReg) tabReg.classList.add('active');
+  }
+}
+
+function handleAuthAction() {
+  if (authToken) {
+    logout();
+  } else {
+    showAuthModal('login');
+  }
+}
+
+function requireAuth() {
+  if (!authToken || !currentUser) {
+    showAuthModal('login');
+    return false;
+  }
+  return true;
+}
+
+async function handleLoginSubmit(event) {
+  event.preventDefault();
+  const emailInput = document.getElementById('login-email');
+  const passInput = document.getElementById('login-password');
+  const errBox = document.getElementById('auth-login-error');
+  const btnSubmit = document.getElementById('btn-login-submit');
+
+  const email = emailInput ? emailInput.value.trim() : '';
+  const password = passInput ? passInput.value : '';
+
+  if (!email || !password) {
+    showAuthError(errBox, 'Заполните все поля');
+    return;
+  }
+
+  if (btnSubmit) btnSubmit.disabled = true;
+  if (errBox) errBox.classList.add('hidden');
+
+  try {
+    const res = await fetch(`${API_URL}/auth/login/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Ошибка входа');
+    }
+
+    authToken = data.token;
+    currentUser = data.user;
+    localStorage.setItem('auth_token', authToken);
+    localStorage.setItem('auth_user', JSON.stringify(currentUser));
+
+    updateAuthUI();
+    loadFields();
+  } catch (err) {
+    showAuthError(errBox, err.message);
+  } finally {
+    if (btnSubmit) btnSubmit.disabled = false;
+  }
+}
+
+async function handleRegisterSubmit(event) {
+  event.preventDefault();
+  const nameInput = document.getElementById('reg-name');
+  const emailInput = document.getElementById('reg-email');
+  const passInput = document.getElementById('reg-password');
+  const errBox = document.getElementById('auth-reg-error');
+  const btnSubmit = document.getElementById('btn-reg-submit');
+
+  const first_name = nameInput ? nameInput.value.trim() : '';
+  const email = emailInput ? emailInput.value.trim() : '';
+  const password = passInput ? passInput.value : '';
+
+  if (!email || !password) {
+    showAuthError(errBox, 'Заполните обязательные поля');
+    return;
+  }
+
+  if (btnSubmit) btnSubmit.disabled = true;
+  if (errBox) errBox.classList.add('hidden');
+
+  try {
+    const res = await fetch(`${API_URL}/auth/register/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, first_name })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Ошибка регистрации');
+    }
+
+    authToken = data.token;
+    currentUser = data.user;
+    localStorage.setItem('auth_token', authToken);
+    localStorage.setItem('auth_user', JSON.stringify(currentUser));
+
+    updateAuthUI();
+    loadFields();
+  } catch (err) {
+    showAuthError(errBox, err.message);
+  } finally {
+    if (btnSubmit) btnSubmit.disabled = false;
+  }
+}
+
+async function logout() {
+  if (authToken) {
+    try {
+      await fetch(`${API_URL}/auth/logout/`, {
+        method: 'POST',
+        headers: getAuthHeaders()
+      });
+    } catch (e) {
+      console.warn('Logout request failed:', e);
+    }
+  }
+
+  authToken = null;
+  currentUser = null;
+  localStorage.removeItem('auth_token');
+  localStorage.removeItem('auth_user');
+
+  updateAuthUI();
+  showAuthModal('login');
+}
+
+function showAuthError(element, message) {
+  if (element) {
+    element.textContent = message;
+    element.classList.remove('hidden');
+  }
+}
+
+async function checkAuthSession() {
+  if (!authToken) {
+    updateAuthUI();
+    showAuthModal('login');
+    return;
+  }
+
+  try {
+    const res = await fetch(`${API_URL}/auth/me/`, {
+      headers: getAuthHeaders()
+    });
+    if (res.ok) {
+      const user = await res.json();
+      currentUser = user;
+      localStorage.setItem('auth_user', JSON.stringify(currentUser));
+      updateAuthUI();
+    } else {
+      authToken = null;
+      currentUser = null;
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('auth_user');
+      updateAuthUI();
+      showAuthModal('login');
+    }
+  } catch (e) {
+    console.warn('Session check failed:', e);
+    updateAuthUI();
+  }
+}
+
+window.switchAuthTab = switchAuthTab;
+window.handleAuthAction = handleAuthAction;
+window.handleLoginSubmit = handleLoginSubmit;
+window.handleRegisterSubmit = handleRegisterSubmit;
 
 let map;
 let currentOverlay = null;
@@ -40,6 +292,7 @@ const legendItems = document.getElementById('legend-items');
 document.addEventListener('DOMContentLoaded', () => {
  initMap();
  switchPage('analysis');
+ checkAuthSession();
  loadFields();
 
  const printDateEl = document.getElementById('print-date');
@@ -56,78 +309,82 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 async function loadFields() {
- try {
- const res = await fetch(`${API_URL}/fields/`);
- if (!res.ok) throw new Error('Failed to load fields');
- const fields = await res.json();
+  try {
+    const res = await fetch(`${API_URL}/fields/`, {
+      headers: getAuthHeaders()
+    });
+    if (!res.ok) throw new Error('Failed to load fields');
+    const fields = await res.json();
 
- const select = document.getElementById('field-select');
- if (select) {
- if (fields.length === 0) {
- select.innerHTML = '<option value="">Нет доступных полей</option>';
- } else {
- select.innerHTML = '<option value="">-- Выберите поле --</option>';
- fields.forEach(field => {
- const option = document.createElement('option');
- option.value = field.id;
- option.textContent = field.name;
- select.appendChild(option);
- });
- }
- }
- } catch (err) {
- console.error("Error loading fields:", err);
- }
+    const select = document.getElementById('field-select');
+    if (select) {
+      if (fields.length === 0) {
+        select.innerHTML = '<option value="">Нет доступных полей</option>';
+      } else {
+        select.innerHTML = '<option value="">-- Выберите поле --</option>';
+        fields.forEach(field => {
+          const option = document.createElement('option');
+          option.value = field.id;
+          option.textContent = field.name;
+          select.appendChild(option);
+        });
+      }
+    }
+  } catch (err) {
+    console.error("Error loading fields:", err);
+  }
 }
 
 window.toggleNewFieldForm = function () {
- const form = document.getElementById('save-field-form');
- if (form) {
- form.style.display = form.style.display === 'none' ? 'block' : 'none';
- }
+  const form = document.getElementById('save-field-form');
+  if (form) {
+    form.style.display = form.style.display === 'none' ? 'block' : 'none';
+  }
 };
 
 window.saveFieldFromMap = async function () {
- if (!currentBounds) {
- alert('Сначала выберите область на карте');
- return;
- }
+  if (!requireAuth()) return;
 
- const nameInput = document.getElementById('new-field-name');
- const name = nameInput ? nameInput.value.trim() : '';
- if (!name) {
- alert('Введите название поля');
- return;
- }
+  if (!currentBounds) {
+    alert('Сначала выберите область на карте');
+    return;
+  }
 
- const bounds = currentBounds;
- const centerLat = (bounds.getSouth() + bounds.getNorth()) / 2;
- const centerLon = (bounds.getWest() + bounds.getEast()) / 2;
+  const nameInput = document.getElementById('new-field-name');
+  const name = nameInput ? nameInput.value.trim() : '';
+  if (!name) {
+    alert('Введите название поля');
+    return;
+  }
 
- const boundsArray = [
- [bounds.getSouth(), bounds.getWest()],
- [bounds.getSouth(), bounds.getEast()],
- [bounds.getNorth(), bounds.getEast()],
- [bounds.getNorth(), bounds.getWest()]
- ];
+  const bounds = currentBounds;
+  const centerLat = (bounds.getSouth() + bounds.getNorth()) / 2;
+  const centerLon = (bounds.getWest() + bounds.getEast()) / 2;
 
- const latDiff = bounds.getNorth() - bounds.getSouth();
- const lonDiff = bounds.getEast() - bounds.getWest();
- const areaKm2 = latDiff * 111.32 * lonDiff * 111.32 * Math.cos(centerLat * Math.PI / 180);
- const areaHa = areaKm2 * 100;
+  const boundsArray = [
+    [bounds.getSouth(), bounds.getWest()],
+    [bounds.getSouth(), bounds.getEast()],
+    [bounds.getNorth(), bounds.getEast()],
+    [bounds.getNorth(), bounds.getWest()]
+  ];
 
- try {
- const res = await fetch(`${API_URL}/fields/`, {
- method: 'POST',
- headers: { 'Content-Type': 'application/json' },
- body: JSON.stringify({
- name: name,
- bounds_json: JSON.stringify(boundsArray),
- center_lat: centerLat,
- center_lon: centerLon,
- area_hectares: Math.round(areaHa * 100) / 100
- })
- });
+  const latDiff = bounds.getNorth() - bounds.getSouth();
+  const lonDiff = bounds.getEast() - bounds.getWest();
+  const areaKm2 = latDiff * 111.32 * lonDiff * 111.32 * Math.cos(centerLat * Math.PI / 180);
+  const areaHa = areaKm2 * 100;
+
+  try {
+    const res = await fetch(`${API_URL}/fields/`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        name: name,
+        bounds_json: JSON.stringify(boundsArray),
+        center_lat: centerLat,
+        center_lon: centerLon,
+        area_hectares: Math.round(areaHa * 100) / 100
+      })
+    });
 
  if (!res.ok) {
  const err = await res.json();
@@ -246,46 +503,46 @@ function initMap() {
 
 
 window.runAnalysis = async function () {
- if (!currentBounds) {
- alert("Карта еще не загрузилась");
- return;
- }
+  if (!requireAuth()) return;
 
- setLoading(true);
- setError(null);
- clearMarkers();
+  if (!currentBounds) {
+    alert("Карта еще не загрузилась");
+    return;
+  }
 
- const bbox = [
- currentBounds.getWest(),
- currentBounds.getSouth(),
- currentBounds.getEast(),
- currentBounds.getNorth()
- ];
+  setLoading(true);
+  setError(null);
+  clearMarkers();
 
- let endpoint = '/growth/analyze/';
- if (currentAnalysisType === 'fertility') endpoint = '/analyze/';
- if (currentAnalysisType === 'weeds') endpoint = '/weeds/detect/';
- if (['infrastructure', 'prediction', 'urban_filter'].includes(currentAnalysisType)) endpoint = '/urban/analyze/';
+  const bbox = [
+    currentBounds.getWest(),
+    currentBounds.getSouth(),
+    currentBounds.getEast(),
+    currentBounds.getNorth()
+  ];
 
- const fieldSelect = document.getElementById('field-select');
- const saveCheck = document.getElementById('save-result-check');
- 
- const fieldId = fieldSelect ? fieldSelect.value : null;
- const saveResult = saveCheck ? saveCheck.checked : false;
- 
+  let endpoint = '/growth/analyze/';
+  if (currentAnalysisType === 'fertility') endpoint = '/analyze/';
+  if (currentAnalysisType === 'weeds') endpoint = '/weeds/detect/';
+  if (['infrastructure', 'prediction', 'urban_filter'].includes(currentAnalysisType)) endpoint = '/urban/analyze/';
 
- try {
- const res = await fetch(`${API_URL}${endpoint}`, {
- method: 'POST',
- headers: { 'Content-Type': 'application/json' },
- body: JSON.stringify({
- bbox,
- field_id: fieldId || null,
- save_result: saveResult,
- analysis_type: currentAnalysisType
- 
- })
- });
+  const fieldSelect = document.getElementById('field-select');
+  const saveCheck = document.getElementById('save-result-check');
+  
+  const fieldId = fieldSelect ? fieldSelect.value : null;
+  const saveResult = saveCheck ? saveCheck.checked : false;
+
+  try {
+    const res = await fetch(`${API_URL}${endpoint}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        bbox,
+        field_id: fieldId || null,
+        save_result: saveResult,
+        analysis_type: currentAnalysisType
+      })
+    });
 
  if (!res.ok) throw new Error('Ошибка связи с сервером');
 
