@@ -337,7 +337,7 @@
       </div>
 
       <!-- Login Form -->
-      <form id="form-login" onsubmit="handleLoginSubmit(event)" class="auth-form">
+      <form id="form-login" onsubmit="handleLoginSubmit(event)" class="auth-form" novalidate>
         <div class="form-group">
           <label for="login-email">Электронная почта</label>
           <input type="email" id="login-email" class="form-input" placeholder="user@example.com" required autocomplete="email" />
@@ -353,7 +353,7 @@
       </form>
 
       <!-- Register Form -->
-      <form id="form-register" onsubmit="handleRegisterSubmit(event)" class="auth-form hidden">
+      <form id="form-register" onsubmit="handleRegisterSubmit(event)" class="auth-form hidden" novalidate>
         <div class="form-group">
           <label for="reg-name">Ваше имя (необязательно)</label>
           <input type="text" id="reg-name" class="form-input" placeholder="Алексей" autocomplete="name" />
