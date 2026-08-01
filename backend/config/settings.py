@@ -79,25 +79,29 @@ LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
     'formatters': {
-        'verbose': {
+        'default': {
             'format': '%(asctime)s [%(levelname)s] %(message)s',
         },
     },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
-            'formatter': 'verbose',
+            'formatter': 'default',
         },
-        'file': {
-            'class': 'logging.FileHandler',
-            'filename': BASE_DIR / 'db_queries.log',
-            'formatter': 'verbose',
+        'google_cloud': {
+            'class': 'google.cloud.logging.handlers.CloudLoggingHandler',
+            'formatter': 'default',
         },
     },
     'loggers': {
+        'django': {
+            'handlers': ['console', 'google_cloud'],
+            'level': 'INFO',
+            'propagate': True,
+        },
         'django.db.backends': {
-            'handlers': ['console', 'file'],
-            'level': 'DEBUG',
+            'handlers': ['console', 'google_cloud'],
+            'level': 'INFO',
             'propagate': False,
         },
     },
