@@ -4,9 +4,17 @@ import os
 import numpy as np
 import cv2
 import base64
-import torch
-import torch.nn as nn
-from torchvision import models, transforms
+try:
+    import torch
+    import torch.nn as nn
+    from torchvision import models, transforms
+    HAS_TORCH = True
+except ImportError:
+    HAS_TORCH = False
+    torch = None
+    nn = None
+    models = None
+    transforms = None
 from PIL import Image
 from django.conf import settings
 from utils.tiles import fetch_satellite_image
@@ -16,6 +24,8 @@ _SOIL_MODEL_DEVICE = None
 
 def load_soil_model():
     global _SOIL_MODEL, _SOIL_MODEL_DEVICE
+    if not HAS_TORCH:
+        return None, None
     if _SOIL_MODEL is not None:
         return _SOIL_MODEL, _SOIL_MODEL_DEVICE
     
@@ -76,68 +86,72 @@ def generate_mock_overlay(bbox):
         m_mountains = is_land & (blur_mag > 60)
         output_rgba[m_mountains] = c_mt
         
-        # Load the PyTorch AI model
+        # Load the PyTorch AI model if available
         model, device = load_soil_model()
         
         # We divide the image into grid cells to perform local fertility classification
         grid_size = 10
         CLASS_NAMES = ['high_fertility', 'low_fertility', 'medium_fertility']
         
-        # Prepare transforms
-        preprocess = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-        ])
-        
-        crops = []
-        cell_coords = []
-        
-        for i in range(grid_size):
-            for j in range(grid_size):
-                y1 = int(i * height / grid_size)
-                y2 = int((i + 1) * height / grid_size)
-                x1 = int(j * width / grid_size)
-                x2 = int((j + 1) * width / grid_size)
-                
-                if y2 - y1 <= 0 or x2 - x1 <= 0:
-                    continue
-                
-                # Check if this cell is mostly water/mountain
-                cell_water = np.count_nonzero(full_water_mask[y1:y2, x1:x2])
-                cell_mountain = np.count_nonzero(m_mountains[y1:y2, x1:x2])
-                cell_total = (y2 - y1) * (x2 - x1)
-                
-                # If the cell is mostly land, evaluate with model
-                if (cell_water + cell_mountain) / cell_total <= 0.5:
-                    crop_rgb = image_rgb[y1:y2, x1:x2]
-                    crop_img = Image.fromarray(crop_rgb)
-                    tensor = preprocess(crop_img)
-                    crops.append(tensor)
-                    cell_coords.append((y1, y2, x1, x2))
-        
-        # Run batched prediction
-        if crops:
-            batch_tensor = torch.stack(crops).to(device)
-            with torch.no_grad():
-                outputs = model(batch_tensor)
-                probabilities = torch.nn.functional.softmax(outputs, dim=1)
-                confidences, class_indices = torch.max(probabilities, dim=1)
+        if model is not None and HAS_TORCH:
+            # Prepare transforms
+            preprocess = transforms.Compose([
+                transforms.Resize((224, 224)),
+                transforms.ToTensor(),
+                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+            ])
             
-            for idx, (y1, y2, x1, x2) in enumerate(cell_coords):
-                class_idx = class_indices[idx].item()
-                conf = confidences[idx].item()
-                pred_class = CLASS_NAMES[class_idx]
+            crops = []
+            cell_coords = []
+            
+            for i in range(grid_size):
+                for j in range(grid_size):
+                    y1 = int(i * height / grid_size)
+                    y2 = int((i + 1) * height / grid_size)
+                    x1 = int(j * width / grid_size)
+                    x2 = int((j + 1) * width / grid_size)
+                    
+                    if y2 - y1 <= 0 or x2 - x1 <= 0:
+                        continue
+                    
+                    # Check if this cell is mostly water/mountain
+                    cell_water = np.count_nonzero(full_water_mask[y1:y2, x1:x2])
+                    cell_mountain = np.count_nonzero(m_mountains[y1:y2, x1:x2])
+                    cell_total = (y2 - y1) * (x2 - x1)
+                    
+                    # If the cell is mostly land, evaluate with model
+                    if (cell_water + cell_mountain) / cell_total <= 0.5:
+                        crop_rgb = image_rgb[y1:y2, x1:x2]
+                        crop_img = Image.fromarray(crop_rgb)
+                        tensor = preprocess(crop_img)
+                        crops.append(tensor)
+                        cell_coords.append((y1, y2, x1, x2))
+            
+            # Run batched prediction
+            if crops:
+                batch_tensor = torch.stack(crops).to(device)
+                with torch.no_grad():
+                    outputs = model(batch_tensor)
+                    probabilities = torch.nn.functional.softmax(outputs, dim=1)
+                    confidences, class_indices = torch.max(probabilities, dim=1)
                 
-                # Map predicted class to color scheme
-                if pred_class == 'high_fertility':
-                    # If high fertility with high confidence, classify as very high
-                    if conf > 0.75:
-                        color = c_v_high
+                for idx, (y1, y2, x1, x2) in enumerate(cell_coords):
+                    class_idx = class_indices[idx].item()
+                    conf = confidences[idx].item()
+                    pred_class = CLASS_NAMES[class_idx]
+                    
+                    # Map predicted class to color scheme
+                    if pred_class == 'high_fertility':
+                        if conf > 0.75:
+                            color = c_v_high
+                        else:
+                            color = c_high
+                    elif pred_class == 'medium_fertility':
+                        color = c_mod
                     else:
-                        color = c_high
-                elif pred_class == 'medium_fertility':
-                    color = c_mod
+                        color = c_low
+                    
+                    output_rgba[y1:y2, x1:x2][is_land[y1:y2, x1:x2]] = color
                 else: # low_fertility
                     # If low fertility with low confidence, classify as desert
                     if conf < 0.7:

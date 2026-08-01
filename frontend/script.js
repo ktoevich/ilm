@@ -1,5 +1,6 @@
-<<<<<<< HEAD
-const API_URL = "http://127.0.0.1:8000/api";
+const API_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.protocol === 'file:'
+  ? 'http://127.0.0.1:8000/api'
+  : '/api';
 
 // --- AUTHENTICATION STATE ---
 let authToken = localStorage.getItem('auth_token') || null;
@@ -252,11 +253,6 @@ window.switchAuthTab = switchAuthTab;
 window.handleAuthAction = handleAuthAction;
 window.handleLoginSubmit = handleLoginSubmit;
 window.handleRegisterSubmit = handleRegisterSubmit;
-=======
-const API_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-  ? 'http://127.0.0.1:8000/api'
-  : '/api';
->>>>>>> 49e9c426bff0c3d9a8551bc941077e859fa16c57
 
 let map;
 let currentOverlay = null;
@@ -391,16 +387,10 @@ const resultsContainer = document.getElementById('results-container');
 const legendItems = document.getElementById('legend-items');
 
 document.addEventListener('DOMContentLoaded', () => {
-<<<<<<< HEAD
- initMap();
- switchPage('analysis');
- checkAuthSession();
- loadFields();
-=======
   initMap();
   switchPage('analysis');
+  checkAuthSession();
   loadFields();
->>>>>>> 49e9c426bff0c3d9a8551bc941077e859fa16c57
 
   const savedTheme = localStorage.getItem('favorable-soil-theme') || 'dark';
   const themeSelect = document.getElementById('theme-select');
@@ -455,20 +445,13 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 async function loadFields() {
-<<<<<<< HEAD
   try {
     const res = await fetch(`${API_URL}/fields/`, {
       headers: getAuthHeaders()
     });
     if (!res.ok) throw new Error('Failed to load fields');
     const fields = await res.json();
-=======
- try {
- const res = await fetch(`${API_URL}/fields/`);
- if (!res.ok) throw new Error('Failed to load fields');
- const fields = await res.json();
- allFields = fields;
->>>>>>> 49e9c426bff0c3d9a8551bc941077e859fa16c57
+    allFields = fields;
 
     const select = document.getElementById('field-select');
     if (select) {
@@ -697,7 +680,6 @@ window.runAnalysis = async function () {
     currentBounds.getNorth()
   ];
 
-<<<<<<< HEAD
   let endpoint = '/growth/analyze/';
   if (currentAnalysisType === 'fertility') endpoint = '/analyze/';
   if (currentAnalysisType === 'weeds') endpoint = '/weeds/detect/';
@@ -720,25 +702,6 @@ window.runAnalysis = async function () {
         analysis_type: currentAnalysisType
       })
     });
-=======
- const fieldSelect = document.getElementById('field-select');
- 
- const fieldId = fieldSelect ? fieldSelect.value : null;
- 
-
- try {
- const res = await fetch(`${API_URL}${endpoint}`, {
- method: 'POST',
- headers: { 'Content-Type': 'application/json' },
- body: JSON.stringify({
- bbox,
- field_id: fieldId || null,
- save_result: false,
- analysis_type: currentAnalysisType
- 
- })
- });
->>>>>>> 49e9c426bff0c3d9a8551bc941077e859fa16c57
 
  if (!res.ok) throw new Error('Ошибка связи с сервером');
 
