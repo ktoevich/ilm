@@ -104,15 +104,13 @@ function requireAuth() {
 async function handleLoginSubmit(event) {
   event.preventDefault();
   const emailInput = document.getElementById('login-email');
-  const passInput = document.getElementById('login-password');
   const errBox = document.getElementById('auth-login-error');
   const btnSubmit = document.getElementById('btn-login-submit');
 
   const email = emailInput ? emailInput.value.trim() : '';
-  const password = passInput ? passInput.value : '';
 
-  if (!email || !password) {
-    showAuthError(errBox, 'Заполните все поля');
+  if (!email) {
+    showAuthError(errBox, 'Заполните поле email');
     return;
   }
 
@@ -120,10 +118,10 @@ async function handleLoginSubmit(event) {
   if (errBox) errBox.classList.add('hidden');
 
   try {
-    const res = await fetch(`${API_URL}/auth/login/`, {
+    const res = await fetch(`${API_URL}/auth/email/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ email })
     });
 
     const data = await res.json();

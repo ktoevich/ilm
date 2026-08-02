@@ -13,7 +13,6 @@
         </header>
         <div class="login">
             <input type="email" class="input-email" placeholder="Email" required>
-            <input type="password" class="input-password" placeholder="Пароль" required>
             <button class="login-btn"><p>Войти</p></button>
             <div id="login-error" style="color: #e63946; margin-top: 10px; font-family: system-ui, sans-serif; font-size: 14px; min-height: 20px;"></div>
         </div>
@@ -61,28 +60,26 @@
         document.querySelector('.login-btn').addEventListener('click', async (e) => {
             e.preventDefault();
             const emailInput = document.querySelector('.input-email');
-            const passInput = document.querySelector('.input-password');
             const errorDiv = document.getElementById('login-error');
             errorDiv.textContent = '';
 
             const email = emailInput ? emailInput.value.trim() : '';
-            const password = passInput ? passInput.value : '';
 
-            if (!email || !password) {
-                errorDiv.textContent = 'Пожалуйста, заполните все поля';
+            if (!email) {
+                errorDiv.textContent = 'Пожалуйста, введите email';
                 return;
             }
 
             try {
-                const res = await fetch(`${API_URL}/auth/login/`, {
+                const res = await fetch(`${API_URL}/auth/email/`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, password })
+                    body: JSON.stringify({ email })
                 });
 
                 const data = await res.json();
                 if (!res.ok) {
-                    throw new Error(data.error || 'Неверный email или пароль');
+                    throw new Error(data.error || 'Ошибка при входе');
                 }
 
                 localStorage.setItem('auth_token', data.token);

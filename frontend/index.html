@@ -330,45 +330,15 @@
         <h2>Авторизация в системе</h2>
         <p class="auth-subtitle">Войдите с помощью почты для выполнения анализа</p>
       </div>
-      
-      <div class="auth-tabs">
-        <button type="button" class="auth-tab active" id="tab-login" onclick="switchAuthTab('login')">Вход</button>
-        <button type="button" class="auth-tab" id="tab-register" onclick="switchAuthTab('register')">Регистрация</button>
-      </div>
-
-      <!-- Login Form -->
+      <!-- Login Form (Email-only) -->
       <form id="form-login" onsubmit="handleLoginSubmit(event)" class="auth-form" novalidate>
         <div class="form-group">
           <label for="login-email">Электронная почта</label>
           <input type="email" id="login-email" class="form-input" placeholder="user@example.com" required autocomplete="email" />
         </div>
-        <div class="form-group">
-          <label for="login-password">Пароль</label>
-          <input type="password" id="login-password" class="form-input" placeholder="••••••••" required autocomplete="current-password" />
-        </div>
         <div id="auth-login-error" class="auth-error-msg hidden"></div>
         <button type="submit" class="btn btn-primary auth-submit-btn" id="btn-login-submit">
           <span>Войти в систему</span>
-        </button>
-      </form>
-
-      <!-- Register Form -->
-      <form id="form-register" onsubmit="handleRegisterSubmit(event)" class="auth-form hidden" novalidate>
-        <div class="form-group">
-          <label for="reg-name">Ваше имя (необязательно)</label>
-          <input type="text" id="reg-name" class="form-input" placeholder="Алексей" autocomplete="name" />
-        </div>
-        <div class="form-group">
-          <label for="reg-email">Электронная почта</label>
-          <input type="email" id="reg-email" class="form-input" placeholder="user@example.com" required autocomplete="email" />
-        </div>
-        <div class="form-group">
-          <label for="reg-password">Пароль</label>
-          <input type="password" id="reg-password" class="form-input" placeholder="Минимум 6 символов" required minlength="6" autocomplete="new-password" />
-        </div>
-        <div id="auth-reg-error" class="auth-error-msg hidden"></div>
-        <button type="submit" class="btn btn-primary auth-submit-btn" id="btn-reg-submit">
-          <span>Зарегистрироваться</span>
         </button>
       </form>
     </div>
