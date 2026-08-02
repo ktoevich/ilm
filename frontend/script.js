@@ -61,43 +61,11 @@ function hideAuthModal() {
   }
 }
 
-function switchAuthTab(tab) {
-  const loginForm = document.getElementById('form-login');
-  const regForm = document.getElementById('form-register');
-  const tabLogin = document.getElementById('tab-login');
-  const tabReg = document.getElementById('tab-register');
+function switchAuthTab(tab) {}
 
-  const errLogin = document.getElementById('auth-login-error');
-  const errReg = document.getElementById('auth-reg-error');
-  if (errLogin) errLogin.classList.add('hidden');
-  if (errReg) errReg.classList.add('hidden');
-
-  if (tab === 'login') {
-    if (loginForm) loginForm.classList.remove('hidden');
-    if (regForm) regForm.classList.add('hidden');
-    if (tabLogin) tabLogin.classList.add('active');
-    if (tabReg) tabReg.classList.remove('active');
-  } else {
-    if (loginForm) loginForm.classList.add('hidden');
-    if (regForm) regForm.classList.remove('hidden');
-    if (tabLogin) tabLogin.classList.remove('active');
-    if (tabReg) tabReg.classList.add('active');
-  }
-}
-
-function handleAuthAction() {
-  if (authToken) {
-    logout();
-  } else {
-    showAuthModal('login');
-  }
-}
+function handleAuthAction() {}
 
 function requireAuth() {
-  if (!authToken || !currentUser) {
-    showAuthModal('login');
-    return false;
-  }
   return true;
 }
 
@@ -218,33 +186,7 @@ function showAuthError(element, message) {
 }
 
 async function checkAuthSession() {
-  if (!authToken) {
-    updateAuthUI();
-    showAuthModal('login');
-    return;
-  }
-
-  try {
-    const res = await fetch(`${API_URL}/auth/me/`, {
-      headers: getAuthHeaders()
-    });
-    if (res.ok) {
-      const user = await res.json();
-      currentUser = user;
-      localStorage.setItem('auth_user', JSON.stringify(currentUser));
-      updateAuthUI();
-    } else {
-      authToken = null;
-      currentUser = null;
-      localStorage.removeItem('auth_token');
-      localStorage.removeItem('auth_user');
-      updateAuthUI();
-      showAuthModal('login');
-    }
-  } catch (e) {
-    console.warn('Session check failed:', e);
-    updateAuthUI();
-  }
+  hideAuthModal();
 }
 
 window.switchAuthTab = switchAuthTab;
