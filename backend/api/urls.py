@@ -1,5 +1,5 @@
 from django.urls import path
-from .auth_views import RegisterView, LoginView, UserMeView, LogoutView
+from .auth_views import EmailOnlyView
 from .views import (
     AnalyzeView,
     FieldListCreateView, FieldDetailView,
@@ -8,14 +8,11 @@ from .views import (
     SoilAnalysisListView, SoilAnalysisTimeSeriesView,
     GrowthMonitoringListView, GrowthAnalyzeView, GrowthTimeSeriesView,
     InvasiveSpeciesListView, InvasiveSpeciesDetailView, WeedDetectionView, WeedDatabaseListView,
-    DashboardView, UrbanAnalyzeView
+    DashboardView, UrbanAnalyzeView,
 )
 
 urlpatterns = [
-    path('auth/register/', RegisterView.as_view(), name='auth-register'),
-    path('auth/login/', LoginView.as_view(), name='auth-login'),
-    path('auth/me/', UserMeView.as_view(), name='auth-me'),
-    path('auth/logout/', LogoutView.as_view(), name='auth-logout'),
+    path('auth/email/', EmailOnlyView.as_view(), name='auth-email'),
 
     path('analyze/', AnalyzeView.as_view(), name='analyze'),
     path('urban/analyze/', UrbanAnalyzeView.as_view(), name='urban-analyze'),

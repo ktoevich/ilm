@@ -88,19 +88,15 @@ LOGGING = {
             'class': 'logging.StreamHandler',
             'formatter': 'default',
         },
-        'google_cloud': {
-            'class': 'google.cloud.logging.handlers.CloudLoggingHandler',
-            'formatter': 'default',
-        },
     },
     'loggers': {
         'django': {
-            'handlers': ['console', 'google_cloud'],
+            'handlers': ['console'],
             'level': 'INFO',
             'propagate': True,
         },
         'django.db.backends': {
-            'handlers': ['console', 'google_cloud'],
+            'handlers': ['console'],
             'level': 'INFO',
             'propagate': False,
         },
