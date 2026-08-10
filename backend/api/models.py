@@ -1,8 +1,10 @@
 from django.db import models
+from django.contrib.auth.models import User
 from django.utils import timezone
 import json
 
 class Field(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='fields', null=True, blank=True, verbose_name="Владелец")
     name = models.CharField(max_length=255, verbose_name="Название участка")
     description = models.TextField(blank=True, null=True, verbose_name="Описание")
     bounds_json = models.TextField(verbose_name="Границы участка (JSON)")
@@ -155,6 +157,7 @@ class CropType(models.Model):
         }
 
 class CropRotation(models.Model):
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='crop_rotations', null=True, blank=True, verbose_name="Пользователь")
     field = models.ForeignKey(Field, on_delete=models.CASCADE, related_name='rotations', verbose_name="Поле")
     crop_type = models.ForeignKey(CropType, on_delete=models.CASCADE, verbose_name="Культура")
     year = models.IntegerField(verbose_name="Год")
@@ -178,6 +181,7 @@ class CropRotation(models.Model):
         return f"{self.field.name} - {self.crop_type.name} ({self.year})"
 
 class SoilAnalysis(models.Model):
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='soil_analyses', null=True, blank=True, verbose_name="Пользователь")
     field = models.ForeignKey(Field, on_delete=models.CASCADE, related_name='analyses', verbose_name="Поле")
     analysis_date = models.DateTimeField(default=timezone.now, verbose_name="Дата анализа")
     bbox_json = models.TextField(verbose_name="BBOX (JSON)")
@@ -211,6 +215,7 @@ class SoilAnalysis(models.Model):
         return self.fertility_index
 
 class InvasiveSpeciesReport(models.Model):
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='invasive_reports', null=True, blank=True, verbose_name="Пользователь")
     field = models.ForeignKey(Field, on_delete=models.CASCADE, related_name='invasive_reports', verbose_name="Поле")
     species_name = models.CharField(max_length=255, verbose_name="Название вида")
     species_type = models.CharField(max_length=50, choices=[
@@ -249,6 +254,7 @@ class InvasiveSpeciesReport(models.Model):
         return f"{self.species_name} на {self.field.name}"
 
 class GrowthMonitoring(models.Model):
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='growth_records', null=True, blank=True, verbose_name="Пользователь")
     field = models.ForeignKey(Field, on_delete=models.CASCADE, related_name='growth_records', verbose_name="Поле")
     observation_date = models.DateField(verbose_name="Дата наблюдения")
     ndvi_mean = models.FloatField(blank=True, null=True, verbose_name="Средний NDVI")

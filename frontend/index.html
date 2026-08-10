@@ -151,18 +151,6 @@
 
  </nav>
 
-  <div class="user-sidebar-card" id="user-sidebar-card" style="display: none;">
-    <div class="user-info-row">
-      <div class="user-avatar" id="user-avatar">👤</div>
-      <div class="user-details">
-        <div class="user-name-text" id="user-name-text">Гость</div>
-        <div class="user-email-text" id="user-email-text">Требуется вход</div>
-      </div>
-    </div>
-    <button class="btn btn-outline btn-auth-toggle" id="btn-auth-action" onclick="handleAuthAction()">
-      🔐 Войти
-    </button>
-  </div>
   </aside>
 
  <main class="main-content">
@@ -321,28 +309,6 @@
 
  </main>
  </div>
-
-
-  <div id="auth-modal" class="auth-overlay hidden">
-    <div class="auth-card">
-      <div class="auth-header">
-        <div class="auth-logo">🌱 Favorable Soil</div>
-        <h2>Авторизация в системе</h2>
-        <p class="auth-subtitle">Войдите с помощью почты для выполнения анализа</p>
-      </div>
-      <!-- Login Form (Email-only) -->
-      <form id="form-login" onsubmit="handleLoginSubmit(event)" class="auth-form" novalidate>
-        <div class="form-group">
-          <label for="login-email">Электронная почта</label>
-          <input type="email" id="login-email" class="form-input" placeholder="user@example.com" required autocomplete="email" />
-        </div>
-        <div id="auth-login-error" class="auth-error-msg hidden"></div>
-        <button type="submit" class="btn btn-primary auth-submit-btn" id="btn-login-submit">
-          <span>Войти в систему</span>
-        </button>
-      </form>
-    </div>
-  </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
   integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>

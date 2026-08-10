@@ -7,11 +7,12 @@ from .models import (
 class FieldSerializer(serializers.ModelSerializer):
     analyses_count = serializers.SerializerMethodField()
     latest_fertility_index = serializers.SerializerMethodField()
+    user_email = serializers.EmailField(source='user.email', read_only=True, default=None)
     
     class Meta:
         model = Field
         fields = [
-            'id', 'name', 'description', 'bounds_json',
+            'id', 'user_email', 'name', 'description', 'bounds_json',
             'center_lat', 'center_lon', 'area_hectares',
             'created_at', 'updated_at', 'analyses_count', 'latest_fertility_index'
         ]
@@ -58,22 +59,24 @@ class CropTypeSerializer(serializers.ModelSerializer):
 class CropRotationSerializer(serializers.ModelSerializer):
     crop_type_name = serializers.CharField(source='crop_type.name', read_only=True)
     field_name = serializers.CharField(source='field.name', read_only=True)
+    user_email = serializers.EmailField(source='user.email', read_only=True, default=None)
     
     class Meta:
         model = CropRotation
         fields = [
-            'id', 'field', 'field_name', 'crop_type', 'crop_type_name',
+            'id', 'user_email', 'field', 'field_name', 'crop_type', 'crop_type_name',
             'year', 'season', 'yield_amount', 'notes', 'created_at'
         ]
         read_only_fields = ['created_at']
 
 class SoilAnalysisSerializer(serializers.ModelSerializer):
     field_name = serializers.CharField(source='field.name', read_only=True)
+    user_email = serializers.EmailField(source='user.email', read_only=True, default=None)
     
     class Meta:
         model = SoilAnalysis
         fields = [
-            'id', 'field', 'field_name', 'analysis_date', 'bbox_json',
+            'id', 'user_email', 'field', 'field_name', 'analysis_date', 'bbox_json',
             'very_high_percent', 'high_percent', 'moderate_percent',
             'low_percent', 'non_fertile_percent', 'fertility_index',
             'overlay_image', 'notes', 'created_at'
@@ -91,11 +94,12 @@ class SoilAnalysisTimeSeriesSerializer(serializers.ModelSerializer):
 
 class InvasiveSpeciesReportSerializer(serializers.ModelSerializer):
     field_name = serializers.CharField(source='field.name', read_only=True)
+    user_email = serializers.EmailField(source='user.email', read_only=True, default=None)
     
     class Meta:
         model = InvasiveSpeciesReport
         fields = [
-            'id', 'field', 'field_name', 'species_name', 'species_type',
+            'id', 'user_email', 'field', 'field_name', 'species_name', 'species_type',
             'severity', 'location_lat', 'location_lon', 'affected_area',
             'image_base64', 'status', 'recommendations',
             'detected_at', 'resolved_at', 'created_at'
@@ -104,11 +108,12 @@ class InvasiveSpeciesReportSerializer(serializers.ModelSerializer):
 
 class GrowthMonitoringSerializer(serializers.ModelSerializer):
     field_name = serializers.CharField(source='field.name', read_only=True)
+    user_email = serializers.EmailField(source='user.email', read_only=True, default=None)
     
     class Meta:
         model = GrowthMonitoring
         fields = [
-            'id', 'field', 'field_name', 'observation_date',
+            'id', 'user_email', 'field', 'field_name', 'observation_date',
             'ndvi_mean', 'ndvi_min', 'ndvi_max', 'moisture_index',
             'health_score', 'growth_stage', 'ndvi_overlay',
             'data_source', 'notes', 'created_at'

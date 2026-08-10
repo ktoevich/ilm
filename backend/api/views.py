@@ -23,18 +23,20 @@ class AnalyzeView(APIView):
         field_id = request.data.get('field_id')
         save_result = request.data.get('save_result', False)
         if not bbox:
-            return Response({"error": "BBOX required"}, status=status.get('HTTP_400_BAD_REQUEST', 400))
+            return Response({"error": "BBOX required"}, status=status.HTTP_400_BAD_REQUEST)
 
         overlay_image, actual_bounds, stats = generate_mock_overlay(bbox)
 
         if not overlay_image:
-            return Response({"error": "Failed to process image"}, status=status.get('HTTP_500_INTERNAL_SERVER_ERROR', 500))
+            return Response({"error": "Failed to process image"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         env_data = analyze_environment_with_crops(bbox)
 
         if save_result and field_id:
             field = get_object_or_404(Field, id=field_id)
-            SoilAnalysis.objects.create(
+            user = request.user if request.user.is_authenticated else None
+            analysis = SoilAnalysis.objects.create(
+                user=user,
                 field=field,
                 bbox_json=json.dumps(bbox),
                 very_high_percent=stats.get('very_high', 0),
@@ -44,7 +46,8 @@ class AnalyzeView(APIView):
                 non_fertile_percent=stats.get('desert', 0) + stats.get('water', 0),
                 overlay_image=overlay_image,
                 notes=f"Method: {stats.get('analysis_method', 'Unknown')}"
-            ).calculate_fertility_index()
+            )
+            analysis.calculate_fertility_index()
 
         legend = {
             "Очень высокое плодородие": "rgba(0, 100, 0, 0.7)",
@@ -67,12 +70,26 @@ class AnalyzeView(APIView):
         })
 
 class FieldListCreateView(generics.ListCreateAPIView):
-    queryset = Field.objects.all()
     serializer_class = FieldSerializer
 
+    def get_queryset(self):
+        if self.request.user.is_authenticated:
+            return Field.objects.filter(user=self.request.user)
+        return Field.objects.all()
+
+    def perform_create(self, serializer):
+        if self.request.user.is_authenticated:
+            serializer.save(user=self.request.user)
+        else:
+            serializer.save()
+
 class FieldDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Field.objects.all()
     serializer_class = FieldSerializer
+
+    def get_queryset(self):
+        if self.request.user.is_authenticated:
+            return Field.objects.filter(user=self.request.user)
+        return Field.objects.all()
 
 class CropTypeListView(generics.ListCreateAPIView):
     queryset = CropType.objects.all()
@@ -83,14 +100,22 @@ class CropTypeDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = CropTypeSerializer
 
 class CropRotationListView(generics.ListCreateAPIView):
-    queryset = CropRotation.objects.all()
     serializer_class = CropRotationSerializer
 
     def get_queryset(self):
+        qs = CropRotation.objects.all()
+        if self.request.user.is_authenticated:
+            qs = qs.filter(user=self.request.user)
         field_id = self.request.query_params.get('field_id')
         if field_id:
-            return CropRotation.objects.filter(field_id=field_id)
-        return CropRotation.objects.all()
+            qs = qs.filter(field_id=field_id)
+        return qs
+
+    def perform_create(self, serializer):
+        if self.request.user.is_authenticated:
+            serializer.save(user=self.request.user)
+        else:
+            serializer.save()
 
 class CropRotationRecommendationView(APIView):
     def get(self, request, field_id):
@@ -143,14 +168,16 @@ class CropPlantingRecommendationView(APIView):
         return Response(results)
 
 class SoilAnalysisListView(generics.ListAPIView):
-    queryset = SoilAnalysis.objects.all()
     serializer_class = SoilAnalysisSerializer
     
     def get_queryset(self):
+        qs = SoilAnalysis.objects.all()
+        if self.request.user.is_authenticated:
+            qs = qs.filter(user=self.request.user)
         field_id = self.request.query_params.get('field_id')
         if field_id:
-            return SoilAnalysis.objects.filter(field_id=field_id)
-        return SoilAnalysis.objects.all()
+            qs = qs.filter(field_id=field_id)
+        return qs
 
 class SoilAnalysisTimeSeriesView(APIView):
     def get(self, request, field_id):
@@ -166,8 +193,18 @@ class SoilAnalysisTimeSeriesView(APIView):
         return Response(data)
 
 class GrowthMonitoringListView(generics.ListCreateAPIView):
-    queryset = GrowthMonitoring.objects.all()
     serializer_class = GrowthMonitoringSerializer
+
+    def get_queryset(self):
+        if self.request.user.is_authenticated:
+            return GrowthMonitoring.objects.filter(user=self.request.user)
+        return GrowthMonitoring.objects.all()
+
+    def perform_create(self, serializer):
+        if self.request.user.is_authenticated:
+            serializer.save(user=self.request.user)
+        else:
+            serializer.save()
 
 class GrowthAnalyzeView(APIView):
     def post(self, request):
@@ -185,10 +222,12 @@ class GrowthAnalyzeView(APIView):
         if save_result and field_id:
             field = get_object_or_404(Field, id=field_id)
             from datetime import date
+            user = request.user if request.user.is_authenticated else None
             GrowthMonitoring.objects.update_or_create(
                 field=field,
                 observation_date=date.today(),
                 defaults={
+                    "user": user,
                     "ndvi_mean": data["ndvi_mean"],
                     "ndvi_min": data["ndvi_min"],
                     "ndvi_max": data["ndvi_max"],
@@ -223,12 +262,26 @@ class GrowthTimeSeriesView(APIView):
         return Response(data)
 
 class InvasiveSpeciesListView(generics.ListCreateAPIView):
-    queryset = InvasiveSpeciesReport.objects.all()
     serializer_class = InvasiveSpeciesReportSerializer
 
+    def get_queryset(self):
+        if self.request.user.is_authenticated:
+            return InvasiveSpeciesReport.objects.filter(user=self.request.user)
+        return InvasiveSpeciesReport.objects.all()
+
+    def perform_create(self, serializer):
+        if self.request.user.is_authenticated:
+            serializer.save(user=self.request.user)
+        else:
+            serializer.save()
+
 class InvasiveSpeciesDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = InvasiveSpeciesReport.objects.all()
     serializer_class = InvasiveSpeciesReportSerializer
+
+    def get_queryset(self):
+        if self.request.user.is_authenticated:
+            return InvasiveSpeciesReport.objects.filter(user=self.request.user)
+        return InvasiveSpeciesReport.objects.all()
 
 class WeedDetectionView(APIView):
     def post(self, request):
@@ -244,8 +297,10 @@ class WeedDetectionView(APIView):
             
         if save_result and field_id:
             field = get_object_or_404(Field, id=field_id)
+            user = request.user if request.user.is_authenticated else None
             for d in data.get('detections', []):
                 InvasiveSpeciesReport.objects.create(
+                    user=user,
                     field=field,
                     species_name=d['name'],
                     severity=d['severity'],

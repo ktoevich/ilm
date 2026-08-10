@@ -149,21 +149,17 @@ def generate_mock_overlay(bbox):
                     elif pred_class == 'medium_fertility':
                         color = c_mod
                     else:
-                        color = c_low
+                        # If low fertility with low confidence, classify as desert
+                        if conf < 0.7:
+                            color = c_ds
+                        else:
+                            color = c_low
                     
-                    output_rgba[y1:y2, x1:x2][is_land[y1:y2, x1:x2]] = color
-                else: # low_fertility
-                    # If low fertility with low confidence, classify as desert
-                    if conf < 0.7:
-                        color = c_ds
-                    else:
-                        color = c_low
-                
-                # Paint only the land pixels in this cell
-                cell_is_land = is_land[y1:y2, x1:x2] & ~m_mountains[y1:y2, x1:x2]
-                cell_slice = output_rgba[y1:y2, x1:x2]
-                cell_slice[cell_is_land] = color
-                output_rgba[y1:y2, x1:x2] = cell_slice
+                    # Paint only the land pixels in this cell
+                    cell_is_land = is_land[y1:y2, x1:x2] & ~m_mountains[y1:y2, x1:x2]
+                    cell_slice = output_rgba[y1:y2, x1:x2]
+                    cell_slice[cell_is_land] = color
+                    output_rgba[y1:y2, x1:x2] = cell_slice
 
         # Count actual pixels colored in each category
         vh_c = np.count_nonzero(np.all(output_rgba == c_v_high, axis=-1))
@@ -364,6 +360,7 @@ def detect_weeds(bbox):
         result = {
             "detections": detections,
             "weed_coverage": round(weed_coverage, 2),
+            "weed_coverage_percent": round(weed_coverage, 2),
             "overlay": f"data:image/png;base64,{png_base64}",
             "bounds": actual_bounds,
             "total_weed_area_sqm": sum(d['area'] for d in detections),

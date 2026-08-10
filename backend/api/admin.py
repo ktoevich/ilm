@@ -6,13 +6,13 @@ from .models import (
 
 @admin.register(Field)
 class FieldAdmin(admin.ModelAdmin):
-    list_display = ['name', 'area_hectares', 'center_lat', 'center_lon', 'created_at']
-    list_filter = ['created_at']
-    search_fields = ['name', 'description']
+    list_display = ['name', 'user', 'area_hectares', 'center_lat', 'center_lon', 'created_at']
+    list_filter = ['created_at', 'user']
+    search_fields = ['name', 'description', 'user__email']
     readonly_fields = ['created_at', 'updated_at']
     fieldsets = (
         ('Основная информация', {
-            'fields': ('name', 'description', 'area_hectares')
+            'fields': ('user', 'name', 'description', 'area_hectares')
         }),
         ('Местоположение', {
             'fields': ('bounds_json', 'center_lat', 'center_lon')
@@ -32,22 +32,22 @@ class CropTypeAdmin(admin.ModelAdmin):
 
 @admin.register(CropRotation)
 class CropRotationAdmin(admin.ModelAdmin):
-    list_display = ['field', 'crop_type', 'year', 'season', 'yield_amount', 'created_at']
-    list_filter = ['year', 'season', 'crop_type']
-    search_fields = ['field__name', 'crop_type__name']
+    list_display = ['field', 'user', 'crop_type', 'year', 'season', 'yield_amount', 'created_at']
+    list_filter = ['year', 'season', 'crop_type', 'user']
+    search_fields = ['field__name', 'crop_type__name', 'user__email']
     autocomplete_fields = ['field', 'crop_type']
 
 @admin.register(SoilAnalysis)
 class SoilAnalysisAdmin(admin.ModelAdmin):
-    list_display = ['field', 'analysis_date', 'fertility_index', 'very_high_percent', 'high_percent', 'moderate_percent']
-    list_filter = ['analysis_date', 'field']
-    search_fields = ['field__name']
+    list_display = ['field', 'user', 'analysis_date', 'fertility_index', 'very_high_percent', 'high_percent', 'moderate_percent']
+    list_filter = ['analysis_date', 'field', 'user']
+    search_fields = ['field__name', 'user__email']
     readonly_fields = ['created_at', 'fertility_index']
     date_hierarchy = 'analysis_date'
     
     fieldsets = (
         ('Основная информация', {
-            'fields': ('field', 'analysis_date', 'bbox_json')
+            'fields': ('user', 'field', 'analysis_date', 'bbox_json')
         }),
         ('Статистика плодородия', {
             'fields': ('very_high_percent', 'high_percent', 'moderate_percent', 'low_percent', 'non_fertile_percent', 'fertility_index')
@@ -60,16 +60,16 @@ class SoilAnalysisAdmin(admin.ModelAdmin):
 
 @admin.register(InvasiveSpeciesReport)
 class InvasiveSpeciesReportAdmin(admin.ModelAdmin):
-    list_display = ['species_name', 'field', 'species_type', 'severity', 'status', 'detected_at']
-    list_filter = ['species_type', 'severity', 'status', 'detected_at']
-    search_fields = ['species_name', 'field__name']
+    list_display = ['species_name', 'field', 'user', 'species_type', 'severity', 'status', 'detected_at']
+    list_filter = ['species_type', 'severity', 'status', 'detected_at', 'user']
+    search_fields = ['species_name', 'field__name', 'user__email']
     readonly_fields = ['created_at', 'detected_at']
     date_hierarchy = 'detected_at'
     list_editable = ['status']
     
     fieldsets = (
         ('Обнаружение', {
-            'fields': ('field', 'species_name', 'species_type', 'severity', 'status')
+            'fields': ('user', 'field', 'species_name', 'species_type', 'severity', 'status')
         }),
         ('Местоположение', {
             'fields': ('location_lat', 'location_lon', 'affected_area')
@@ -86,15 +86,15 @@ class InvasiveSpeciesReportAdmin(admin.ModelAdmin):
 
 @admin.register(GrowthMonitoring)
 class GrowthMonitoringAdmin(admin.ModelAdmin):
-    list_display = ['field', 'observation_date', 'ndvi_mean', 'health_score', 'growth_stage', 'data_source']
-    list_filter = ['observation_date', 'growth_stage', 'data_source']
-    search_fields = ['field__name']
+    list_display = ['field', 'user', 'observation_date', 'ndvi_mean', 'health_score', 'growth_stage', 'data_source']
+    list_filter = ['observation_date', 'growth_stage', 'data_source', 'user']
+    search_fields = ['field__name', 'user__email']
     readonly_fields = ['created_at']
     date_hierarchy = 'observation_date'
     
     fieldsets = (
         ('Основная информация', {
-            'fields': ('field', 'observation_date', 'data_source')
+            'fields': ('user', 'field', 'observation_date', 'data_source')
         }),
         ('NDVI показатели', {
             'fields': ('ndvi_mean', 'ndvi_min', 'ndvi_max')

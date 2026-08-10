@@ -1,5 +1,4 @@
 from django.urls import path
-from .auth_views import EmailOnlyView
 from .views import (
     AnalyzeView,
     FieldListCreateView, FieldDetailView,
@@ -12,8 +11,6 @@ from .views import (
 )
 
 urlpatterns = [
-    path('auth/email/', EmailOnlyView.as_view(), name='auth-email'),
-
     path('analyze/', AnalyzeView.as_view(), name='analyze'),
     path('urban/analyze/', UrbanAnalyzeView.as_view(), name='urban-analyze'),
 
