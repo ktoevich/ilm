@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "npm ci --prefix frontend",
   "buildCommand": "npm run build",
   "outputDirectory": "frontend/dist",
   "rewrites": [
@@ -7,13 +8,5 @@
       "source": "/api/:path*",
       "destination": "https://REPLACE-WITH-YOUR-BACKEND-HOST/api/:path*"
     }
-  ],
-  "//": [
-    "Vercel hosts the static frontend only.",
-    "The Django API does not belong in a serverless function: an analysis",
-    "downloads satellite tiles and runs OpenCV over the mosaic, which exceeds",
-    "the execution budget, and SQLite under /tmp loses every write between",
-    "invocations. Deploy the backend from the Dockerfile at the repo root and",
-    "point the rewrite above at it."
   ]
 }
