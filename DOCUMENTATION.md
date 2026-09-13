@@ -1,87 +1,119 @@
-# Favorable Soil — полная документация проекта
+# Favorable Soil — документация проекта
 
-Дата разбора: 13 сентября 2026
+Актуально на 13 сентября 2026.
 
 Содержание:
 
 1. [Что делает проект](#1-что-делает-проект)
 2. [Архитектура и поток данных](#2-архитектура-и-поток-данных)
-3. [Запуск и окружение](#3-запуск-и-окружение)
-4. [Аутентификация](#4-аутентификация)
-5. [API](#5-api)
-6. [Модели базы данных](#6-модели-базы-данных)
-7. [Разбор каждого файла](#7-разбор-каждого-файла)
-8. [Найденные ошибки и риски](#8-найденные-ошибки-и-риски)
-9. [Неподключённый и мёртвый код](#9-неподключённый-и-мёртвый-код)
-10. [Доработка от 13 сентября 2026: официальные источники вместо эвристик](#10-доработка-от-13-сентября-2026-официальные-источники-вместо-эвристик)
+3. [Локальный запуск](#3-локальный-запуск)
+4. [Деплой: Railway, Vercel, Neon](#4-деплой-railway-vercel-neon)
+5. [Аутентификация](#5-аутентификация)
+6. [API](#6-api)
+7. [Модели базы данных](#7-модели-базы-данных)
+8. [Источники данных и методики](#8-источники-данных-и-методики)
+9. [Разбор файлов](#9-разбор-файлов)
+10. [Проверки и CI](#10-проверки-и-ci)
+11. [Известные ограничения и открытые вопросы](#11-известные-ограничения-и-открытые-вопросы)
 
 ---
 
 ## 1. Что делает проект
 
-Веб-приложение для оценки сельскохозяйственных участков по спутниковым данным. Пользователь открывает карту, наводит её на участок, выбирает тип анализа и нажимает «Анализировать». Бэкенд скачивает снимки, считает индексы и возвращает картинку-маску (PNG в base64), статистику и агроклиматический контекст.
+Веб-приложение для оценки сельскохозяйственных участков по спутниковым данным.
+Пользователь открывает карту, выделяет участок (или берёт готовый контур из
+OpenStreetMap), выбирает тип анализа и нажимает «Анализировать». Бэкенд
+запрашивает растры у публичных сервисов, считает индексы и возвращает
+картинку-маску (PNG в base64), статистику, названный метод расчёта и
+агроклиматический контекст.
 
-Пять типов анализа:
+Шесть типов анализа в интерфейсе:
 
 | Тип в UI | Эндпоинт | Что считается |
 |---|---|---|
-| Плодородие | `POST /api/analyze/` | Классы плодородия по NDVI (Sentinel-2) или ExG (RGB-подложка), уклон по DEM, маска воды, плюс погода, химия почвы и подбор культур |
-| Качество жизни почвы | `POST /api/growth/analyze/` | Вегетационный индекс (NDVI или ExG), стадия роста, «здоровье» |
-| Сорняки | `POST /api/weeds/detect/` | Текстурные аномалии растительности (кандидаты в очаги сорняков) |
-| Инфраструктура | `POST /api/urban/analyze/` `infrastructure` | Контуры зданий, плотность застройки |
-| Предсказание застройки | `POST /api/urban/analyze/` `prediction` | Свободная земля рядом с застройкой |
+| Плодородие | `POST /api/analyze/` | Композит: многолетний NDVI × оценка почвы SoilGrids, маска WorldCover, уклон DEM; плюс погода, химия почвы и подбор культур |
+| Качество жизни почвы | `POST /api/growth/analyze/` | NDVI текущей сцены, NDMI (влажность покрова), отклонение от нормы прошлых лет, стадия роста |
+| Сорняки | `POST /api/weeds/detect/` | Участки, где NDVI отличается от медианы поля более чем на 2 MAD, внутри пашни по WorldCover |
+| Инфраструктура | `POST /api/urban/analyze/` `infrastructure` | Класс «застройка» WorldCover + контуры зданий OSM |
+| Динамика застройки | `POST /api/urban/analyze/` `prediction` | WorldCover 2020 → 2021, новая застройка, свободная земля рядом |
+| Покров земли | `POST /api/urban/analyze/` `urban_filter` | 11 классов ESA WorldCover с официальной легендой |
 
-Стек: Django 5.2 + Django REST Framework (бэкенд), vanilla JS + Leaflet + Vite (фронтенд), OpenCV/NumPy/Pillow (обработка изображений), PostgreSQL или SQLite (БД), locmem или Redis (кеш). Опционально PyTorch ResNet-18 (выключен по умолчанию).
+Стек: Django 5.2 + Django REST Framework, vanilla JS + Leaflet + Vite,
+OpenCV/NumPy/Pillow, PostgreSQL (Neon) в проде и SQLite локально, locmem или
+Redis для кеша. Опционально PyTorch ResNet-18, по умолчанию выключен.
 
-Все внешние источники данных бесплатны и без ключей: Microsoft Planetary Computer (Sentinel-2), ISRIC SoilGrids, Open-Meteo (погода и рельеф), OpenStreetMap Overpass (границы полей), Nominatim (страна), ArcGIS World Imagery (тайлы подложки).
+Все внешние источники бесплатны и без ключей: Microsoft Planetary Computer
+(Sentinel-2, WorldCover), ISRIC SoilGrids, Open-Meteo (погода и рельеф),
+OpenStreetMap Overpass (границы полей, здания), Nominatim (страна), ArcGIS
+World Imagery (подложка карты).
 
 ---
 
 ## 2. Архитектура и поток данных
 
+### Топология в проде
+
 ```
-Браузер (frontend/script.js)
+Браузер
+   │  https://ilm-flame.vercel.app          статика фронтенда (Vercel)
+   │  https://ilm-flame.vercel.app/api/*    rewrite из frontend/vercel.json
+   ▼
+Railway: ilm-production.up.railway.app     контейнер из Dockerfile, gunicorn
+   │  DATABASE_URL
+   ▼
+Neon PostgreSQL
+```
+
+Фронтенд и API для браузера живут на одном домене, поэтому CORS в проде не
+нужен. Бэкенд ходит наружу только к публичным геосервисам.
+
+### Поток одного запроса анализа
+
+```
+frontend/script.js
    │  X-Device-Id: <uuid>          fetch(JSON)
    ▼
-Django (config/urls.py → api/urls.py → api/views.py)
+config/urls.py → api/urls.py → api/views.py
    │  DeviceAuthentication → User "device_<uuid>"
    │  ScopedRateThrottle: analysis 30/ч, crud 600/ч
    ▼
-api/views.AnalysisView.parse_request
-   │  serializers.AnalyzeRequestSerializer → validators.parse_bbox
+AnalysisView.parse_request
+   │  AnalyzeRequestSerializer → validators.parse_bbox
+   │  field_id резолвится только среди своих полей
    ▼
 api/analysis/*  (fertility | vegetation | weeds | urban | environment)
    │
-   ├─ api/services/sentinel.py ──► Planetary Computer (STAC + raster API, NDVI + SCL)
-   ├─ utils/tiles.py ────────────► ArcGIS тайлы (fallback, RGB мозаика)
-   ├─ api/services/elevation.py ─► Open-Meteo Elevation (сетка 10×10 высот)
-   ├─ api/services/soilgrids.py ─► ISRIC SoilGrids (pH, N, SOC, CEC, clay, sand, wv0033)
-   ├─ api/services/weather.py ───► Open-Meteo Forecast (текущая погода + осадки 7 дн)
-   ├─ api/services/geocoding.py ─► Nominatim (страна) / фолбэк по bbox стран
-   └─ api/services/osm_fields.py ► Overpass (полигоны farmland/meadow/…)
-   │
+   ├─ services/sentinel.py ───► Planetary Computer: STAC + raster API (NDVI, NDMI, SCL)
+   ├─ services/worldcover.py ─► Planetary Computer: ESA WorldCover 2020/2021
+   ├─ services/buildings.py ──► Overpass: контуры зданий
+   ├─ services/elevation.py ──► Open-Meteo Elevation: сетка 10×10 высот
+   ├─ services/soilgrids.py ──► ISRIC SoilGrids: pH, N, SOC, CEC, глина, песок, wv0033
+   ├─ services/weather.py ────► Open-Meteo Forecast: погода + осадки за 7 дней
+   ├─ services/geocoding.py ──► Nominatim: страна
+   ├─ services/osm_fields.py ─► Overpass: полигоны farmland/meadow/…
+   └─ utils/tiles.py ─────────► ArcGIS: RGB-мозаика для фолбэка
    ▼
-api/analysis/imagery.encode_overlay → PNG base64
-   │
+analysis/imagery.encode_overlay → PNG base64
    ▼
-Response JSON {overlay, stats, legend, method, imagery, environment}
-   │  (при save_result=true и field_id) → SoilAnalysis / GrowthMonitoring / InvasiveSpeciesReport
+Response {overlay, stats, legend, method, imagery, components, environment}
+   │  save_result=true + field_id → SoilAnalysis / GrowthMonitoring / InvasiveSpeciesReport
    ▼
-Браузер: L.imageOverlay на карту, renderResult → HTML в #results-container
+Браузер: L.imageOverlay на карту, renderResult → #results-container
 ```
 
-Ключевые правила, которые проект соблюдает во всём бэкенде:
+Правила, которые соблюдаются во всём бэкенде:
 
-* каждый queryset фильтруется по `request.user` (нет анонимного доступа);
-* пайплайны анализа принимают уже валидированный `bbox` и бросают `AnalysisError` с текстом для пользователя, а не возвращают `None`;
-* каждый клиент внешнего сервиса сам отвечает за таймаут, кеш и возврат `None` при отказе; выдуманные значения запрещены;
-* каждый ответ анализа говорит, чем он получен (`method`) и на каком снимке (`imagery`).
-
-Порядок предпочтения источников для плодородия и зелёности: сначала Sentinel-2 NDVI (10 м, реальная дата съёмки, маска облаков). Если каталог недоступен, за 90 дней нет сцены с облачностью < 40 % или облака закрывают > 50 % области, происходит переключение на ExG по RGB-подложке (без даты, грубее). `DISABLE_SENTINEL=true` выключает первый путь принудительно.
+* каждый queryset фильтруется по `request.user`, анонимного доступа нет;
+* пайплайны получают уже валидированный `bbox` и бросают `AnalysisError`
+  с текстом для пользователя, а не возвращают `None`;
+* каждый клиент внешнего сервиса сам отвечает за таймаут, кеш и возврат
+  `None` при отказе; выдуманные значения запрещены;
+* каждый ответ анализа говорит, чем он получен (`method`) и на каком снимке
+  (`imagery`).
 
 ---
 
-## 3. Запуск и окружение
+## 3. Локальный запуск
 
 ```bash
 python -m venv venv && source venv/bin/activate
@@ -92,41 +124,151 @@ python manage.py runserver                 # :8000
 cd ../frontend && npm install && npm run dev   # :5173, /api проксируется на :8000
 ```
 
-Проверки:
+Переменные окружения читаются в `backend/config/settings.py`, полный список с
+комментариями в `backend/.env.example`. Значений по умолчанию достаточно для
+локальной работы: SQLite, `DEBUG=True`, кеш в памяти процесса,
+`CORS_ALLOW_ALL_ORIGINS=True`.
 
-```bash
-ruff check .                     # линт (проходит)
-cd backend && python manage.py test        # 89 тестов, in-memory SQLite (проходят)
-cd frontend && npm run build && npm test   # сборка + 37 jsdom-проверок (проходят)
-```
+`backend/.env` в git не попадает. Если в нём задать `DATABASE_URL`, локальный
+`runserver`, `migrate` и `loaddata` пойдут в эту базу. Тесты этого не делают:
+`manage.py test` подставляет `config.settings_test` с in-memory SQLite.
 
-Переменные окружения читаются в `backend/config/settings.py` (полный список в `backend/.env.example`). При `DJANGO_DEBUG=False` без `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS` или `DATABASE_URL` сервер отказывается стартовать.
-
-Текущее состояние локального `backend/.env` (файл не в git): `DJANGO_DEBUG=True`, `DJANGO_ALLOWED_HOSTS=*`, `DATABASE_URL` указывает на хостинговый Neon PostgreSQL. См. [ошибку №4](#8-найденные-ошибки-и-риски).
-
-Деплой: Dockerfile в корне собирает образ с gunicorn (2 воркера × 4 потока). `vercel.json` раздаёт только фронтенд и должен проксировать `/api` на хост бэкенда.
+Локальный venv на Python 3.14, образ для Railway на Python 3.12, ruff целится в
+3.11. Тесты проходят на обоих, но при странностях в зависимостях стоит
+проверить версию.
 
 ---
 
-## 4. Аутентификация
+## 4. Деплой: Railway, Vercel, Neon
+
+### 4.1 Бэкенд на Railway
+
+Сервис собирается из корневого `Dockerfile` по правилам `railway.toml`:
+
+| Параметр | Значение | Зачем |
+|---|---|---|
+| `builder` | `DOCKERFILE` | Образ `python:3.12-slim` + libgl для OpenCV, gunicorn 2 воркера × 4 потока |
+| `preDeployCommand` | `python manage.py migrate --noinput` | Миграции выполняются в новом образе до переключения трафика; упавшая миграция не заменяет работающий деплой |
+| `healthcheckPath` | `/api/health/` | Railway пробует его по HTTP с Host `healthcheck.railway.app`; эндпоинт без авторизации, лимитов и БД, исключён из HTTPS-редиректа |
+| `restartPolicyType` | `ON_FAILURE`, 5 попыток | Перезапуск при падении |
+
+Gunicorn слушает порт из переменной `PORT`, которую задаёт Railway (с запасным
+значением 8000 для `docker run`). **Порт публичного домена в Settings →
+Networking должен совпадать с этим портом**, иначе роутер Railway отвечает
+502 «Application failed to respond» с заголовком `x-railway-fallback: true`.
+
+Переменные сервиса (Variables):
+
+```
+DJANGO_DEBUG=False
+DJANGO_SECRET_KEY=<python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())">
+DATABASE_URL=<строка подключения Neon>
+GEOCODER_CONTACT=<e-mail, который Nominatim просит указывать в User-Agent>
+```
+
+Необязательные:
+
+```
+REDIS_URL=${{Redis.REDIS_URL}}     общий кеш тайлов и SoilGrids между воркерами и рестартами
+DJANGO_ALLOWED_HOSTS=...           только для своего домена
+DJANGO_CSRF_TRUSTED_ORIGINS=...    только если нужна админка по своему домену
+```
+
+Домен `*.up.railway.app` в `ALLOWED_HOSTS` подставлять не нужно: настройки
+читают `RAILWAY_PUBLIC_DOMAIN`, которую Railway задаёт после создания
+публичного домена, и добавляют его вместе с `healthcheck.railway.app`. Пока
+домена нет, переменной нет, и production-настройки откажутся стартовать с
+ошибкой про `DJANGO_ALLOWED_HOSTS`. Это ожидаемо: сначала Generate Domain.
+
+Типичные ошибки первого деплоя и что они значат:
+
+| Строка в логах | Причина |
+|---|---|
+| `DJANGO_SECRET_KEY must be set when DJANGO_DEBUG is False` | Не задана переменная секрета |
+| `DJANGO_ALLOWED_HOSTS must list the hostnames…` | Нет публичного домена и не задана переменная вручную |
+| `DATABASE_URL must be set in production` | Не задана строка базы |
+| 502 с `x-railway-fallback: true` на любом пути | Порт домена не совпадает с портом gunicorn |
+
+Текущий домен: `ilm-production.up.railway.app`. Проверка:
+
+```
+curl https://ilm-production.up.railway.app/api/health/      # {"status":"ok"}
+```
+
+### 4.2 Фронтенд на Vercel
+
+Vercel хостит только статику. `.vercelignore` исключает всё питоновское,
+иначе Vercel находил `backend/manage.py` и пытался собрать Django.
+
+Проект настроен с Root Directory `frontend`, поэтому действует
+`frontend/vercel.json`: `framework: vite`, `npm run build`, `outputDirectory:
+dist` и rewrite `/api/(.*)` → `https://ilm-production.up.railway.app/api/$1`.
+Корневой `vercel.json` описывает тот же деплой для случая, когда Root Directory
+не задан (`installCommand: npm ci --prefix frontend`, `outputDirectory:
+frontend/dist`), и содержит такой же rewrite. При смене домена бэкенда
+правятся обе строки.
+
+Сборка происходит на каждый push в `main`. Текущий домен:
+`https://ilm-flame.vercel.app`.
+
+Почему бэкенд не на Vercel: один анализ качает и склеивает десятки растров и
+гоняет по ним OpenCV, что выходит за лимит времени serverless-функции;
+`opencv` + `numpy` почти упираются в лимит размера бандла; кеш тайлов не
+переживает процесс.
+
+### 4.3 База Neon
+
+Обычный PostgreSQL, подключение через `DATABASE_URL` с `sslmode=require`.
+`dj_database_url` держит соединения 600 секунд. Схема создаётся миграциями
+при деплое, справочники культур и сорняков загружаются один раз:
+
+```
+python manage.py loaddata api/fixtures/initial_data.json
+```
+
+Картинки-маски хранятся в TEXT-колонках как base64 PNG (до сотен КБ на
+запись), так что на бесплатном тарифе квота расходуется быстро.
+
+### 4.4 Как выкатить изменение
+
+1. `ruff check .`, `python manage.py test`, `npm run build && npm test`.
+2. Push в `main`. CI прогоняет то же самое.
+3. Railway и Vercel пересобирают сами. Railway применит миграции до
+   переключения трафика.
+4. Проверить `curl …/api/health/` на Railway и `…/api/session/` через Vercel
+   с заголовком `X-Device-Id`.
+
+---
+
+## 5. Аутентификация
 
 Регистрации нет. Файл `backend/api/authentication.py`:
 
-1. Браузер один раз генерирует UUID v4 (`crypto.randomUUID` или ручной фолбэк), хранит в `localStorage` под ключом `favorable-soil-device-id` и шлёт в заголовке `X-Device-Id`.
-2. `DeviceAuthentication.authenticate` проверяет UUID регэкспом, ищет `User` с username `device_<uuid>`; если нет, создаёт с непригодным паролем. Гонка двух первых запросов ловится по `IntegrityError`.
-3. Регистрация новых устройств ограничена 20 в час на IP (ключ в кеше `device-registrations:<ip>`); IP берётся из `X-Forwarded-For` без проверки доверенных прокси.
-4. Запрос без заголовка → `None` → далее пробуются `TokenAuthentication` и `SessionAuthentication`; если никто не опознал, `IsAuthenticated` возвращает 401.
+1. Браузер один раз генерирует UUID v4 (`crypto.randomUUID` или ручной
+   фолбэк для http://), хранит в `localStorage` под ключом
+   `favorable-soil-device-id` и шлёт в заголовке `X-Device-Id`.
+2. `DeviceAuthentication.authenticate` проверяет UUID регэкспом, ищет `User`
+   с username `device_<uuid>`; если нет, создаёт с непригодным паролем. Гонка
+   двух первых запросов ловится по `IntegrityError`.
+3. Регистрация новых устройств ограничена 20 в час на IP (ключ в кеше
+   `device-registrations:<ip>`).
+4. Запрос без заголовка → далее пробуются `TokenAuthentication` и
+   `SessionAuthentication`; если никто не опознал, `IsAuthenticated` даёт 401.
 
-Последствие, заявленное в README: кто владеет UUID, владеет аккаунтом; очистка данных сайта = новый пустой аккаунт.
+Кто владеет UUID, владеет аккаунтом; очистка данных сайта или смена браузера
+означает новый пустой аккаунт. Чувствительные данные здесь хранить не
+следует. `/api/health/` единственный эндпоинт без аутентификации.
 
 ---
 
-## 5. API
+## 6. API
 
-Все списки пагинированы (`{count, next, previous, results}`, 20 на страницу). Все эндпоинты требуют аутентификации.
+Все списки пагинированы (`{count, next, previous, results}`, 20 на страницу).
+Все эндпоинты, кроме `/api/health/`, требуют аутентификации.
 
-| Метод | Путь | View | Throttle | Используется фронтендом |
+| Метод | Путь | View | Throttle | Фронтенд |
 |---|---|---|---|---|
+| GET | `/api/health/` | `HealthView` | нет | нет (Railway) |
 | GET | `/api/session/` | `SessionView` | crud | да |
 | GET | `/api/capabilities/` | `CapabilitiesView` | crud | нет |
 | POST | `/api/analyze/` | `AnalyzeView` | analysis | да |
@@ -154,419 +296,376 @@ cd frontend && npm run build && npm test   # сборка + 37 jsdom-прове�
 { "bbox": [69.20, 41.30, 69.23, 41.33], "field_id": 12, "save_result": true, "analysis_type": "infrastructure" }
 ```
 
-`bbox` = `[запад, юг, восток, север]` в градусах, не больше 10° по стороне. `analysis_type` читает только `/api/urban/analyze/`. Ошибки: 400 (bbox/валидация), 401 (устройство не опознано), 404 (чужой или несуществующий `field_id`), 429 (лимит), 502 (внешний сервис не ответил, тело `{"error": "..."}`).
+`bbox` = `[запад, юг, восток, север]` в градусах, не больше 10° по стороне;
+при слишком большом выделении зум снижается, чтобы уложиться в бюджет тайлов
+(`MAX_TILES_PER_REQUEST`). `analysis_type` читает только
+`/api/urban/analyze/`. `field_id` чужого пользователя неотличим от
+несуществующего.
+
+Коды ошибок: 400 (bbox или валидация), 401 (устройство не опознано),
+404 (чужой или несуществующий `field_id`, ненайденные контуры OSM),
+429 (лимит), 502 (внешний сервис не ответил, тело `{"error": "..."}`).
+
+Лимиты: `THROTTLE_ANALYSIS` 30/час и `THROTTLE_CRUD` 600/час на пользователя.
+Списки не содержат base64-изображений, маска отдаётся только на
+detail-эндпоинте.
 
 ---
 
-## 6. Модели базы данных
+## 7. Модели базы данных
 
-Файл `backend/api/models.py`. Все пользовательские записи имеют `user` (FK на `auth.User`, nullable; записи с `NULL` невидимы через API).
+Файл `backend/api/models.py`. Все пользовательские записи имеют `user`
+(FK на `auth.User`, nullable; записи с `NULL` невидимы через API).
 
 | Модель | Назначение | Ключевые поля | Связи |
 |---|---|---|---|
 | `Field` | Участок пользователя | `name`, `bounds_json` (TEXT, JSON-полигон), `center_lat/lon`, `area_hectares` | `user` CASCADE |
-| `CropType` | Справочник культур (глобальный, только через admin) | pH/температура/NPK/влажность/сезон/урожайность | M2M `good_predecessors`, `bad_predecessors` на себя |
+| `CropType` | Справочник культур (глобальный, через admin) | pH/температура/NPK/влажность/сезон/урожайность, инструкции | M2M `good_predecessors`, `bad_predecessors` на себя |
 | `CropRotation` | Запись севооборота | `year`, `season`, `yield_amount` | `field`, `crop_type`; unique (`field`,`year`,`season`) |
 | `SoilAnalysis` | Сохранённый анализ плодородия | проценты по классам, `fertility_index`, `overlay_image` (base64 PNG) | `field` CASCADE, `user` SET_NULL |
-| `InvasiveSpeciesReport` | Очаг сорняка/вредителя | `species_name`, `severity`, `status`, координаты, `affected_area` | `field`, `user` |
-| `GrowthMonitoring` | Наблюдение зелёности | `observation_date`, `ndvi_mean/min/max` (на деле ExG или NDVI), `health_score`, `growth_stage`, `ndvi_overlay` | `field`, `user`; unique (`field`,`observation_date`) |
+| `InvasiveSpeciesReport` | Очаг аномалии/сорняка | `species_name`, `severity`, `status`, координаты, `affected_area` | `field`, `user` |
+| `GrowthMonitoring` | Наблюдение зелёности | `observation_date`, `ndvi_mean/min/max`, `health_score`, `growth_stage`, `data_source`, `ndvi_overlay` | `field`, `user`; unique (`field`,`observation_date`) |
 | `WeedDatabase` | Справочник сорняков | `name`, `danger_level`, `control_methods` | нет |
 
-Методы: `Field.get_bounds/set_bounds` (JSON), `CropType.check_soil_compatibility(ph, n, p, k, moisture)` (оценка 0..5 → проценты, список проблем и рекомендаций), `SoilAnalysis.calculate_fertility_index()` (взвешенная сумма процентов).
+Методы: `Field.get_bounds/set_bounds`, `CropType.check_soil_compatibility(ph,
+n, p, k, moisture)` (оценка 0..5 → проценты, проблемы, рекомендации),
+`SoilAnalysis.calculate_fertility_index()`.
 
-Миграции: `mainofbd` (начальная, сгенерирована Django 6.0.1) → `factsofplants` (агрономические поля `CropType`) → `0001_delete_feedbacklabel` → `0002_add_user_to_models`. `makemigrations --check` чист.
+Миграции: `mainofbd` → `factsofplants` → `0001_delete_feedbacklabel` →
+`0002_add_user_to_models`. `makemigrations --check` чист. Фикстура
+`api/fixtures/initial_data.json`: 12 `CropType` и 5 `WeedDatabase`.
 
-Фикстура `api/fixtures/initial_data.json`: 12 `CropType` и 5 `WeedDatabase`.
+Запись в чужое поле через `/api/rotations/`, `/api/growth/` и `/api/invasive/`
+отклоняется на уровне сериализаторов (`OwnedFieldMixin.validate_field`, 400).
 
 ---
 
-## 7. Разбор каждого файла
-
-### 7.1 Корень репозитория
-
-**`README.md`** — описание проекта на русском: источники данных, офсет отражения Sentinel-2, быстрый старт, аутентификация, таблица API, деплой. Актуален по смыслу, но говорит про 41 тест (реально 68).
-
-**`Dockerfile`** — образ `python:3.12-slim`, ставит `libgl1`, `libglib2.0-0` для OpenCV, копирует только `backend/`, собирает статику через `collectstatic` (с `DJANGO_DEBUG=True` только на время сборки), запускает под непривилегированным пользователем `gunicorn config.wsgi:application --workers 2 --threads 4 --timeout 120`. Папка `ai model` в образ не попадает (см. `.dockerignore`), поэтому ResNet в контейнере недоступен по умолчанию.
-
-**`.dockerignore`** — исключает `.git`, `venv`, `node_modules`, `frontend/dist`, `backend/.env`, `backend/db.sqlite3`, `ai model`, логи.
-
-**`vercel.json`** — `buildCommand: npm run build`, `outputDirectory: frontend/dist`, rewrite `/api/:path*` → `https://REPLACE-WITH-YOUR-BACKEND-HOST/api/:path*`. Хостит только статику фронтенда.
-
-**`package.json`** (корень) — скрипты-обёртки: `build` и `dev` делегируют в `frontend/`, `test` запускает Django-тесты. Зависимостей нет.
-
-**`pyproject.toml`** — конфигурация ruff: длина строки 100, правила F/E/W/I/B/UP/C4, исключены миграции, venv, frontend.
-
-**`requirements.txt`** — рантайм-зависимости с пинами: Django 5.2.16, DRF 3.17.1, django-cors-headers, dj-database-url, psycopg2-binary, numpy 2.5.1, Pillow, opencv-python-headless, requests, gunicorn, whitenoise, python-dotenv.
-
-**`requirements-ml.txt`** — torch 2.13.0, torchvision 0.28.0, tqdm. Ставится только для обучения или включения модели на тайлах.
-
-**`.gitattributes`** — LF для исходников, бинарные картинки, `*.pth` объявлен как Git LFS.
-
-**`.gitignore`** — venv, node_modules, dist, `*.pyc`, `.env` (кроме `.env.example`), `*.sqlite3`, `*.log`, `backend/staticfiles`.
-
-**`.github/workflows/ci.yml`** — два job'а. `backend`: Python 3.12, `pip install -r requirements.txt` + ruff, `ruff check .`, `makemigrations --check` (с `DJANGO_DEBUG=True`), `python manage.py test` (без переменных окружения), проверка, что `DJANGO_DEBUG=False manage.py check` падает без SECRET_KEY. `frontend`: Node 20, `npm ci`, `npm run build`, `npm test`, проверка, что в `dist/` есть JS-бандл и `index.html` не ссылается на голый `script.js`.
-
-### 7.2 `backend/` — точки входа и конфигурация
-
-**`manage.py`** — стандартный, но выбирает `config.settings_test`, если в аргументах есть `test`, иначе `config.settings`. Нужно, чтобы тесты не шли в хостинговую БД из `.env`.
-
-**`config/settings.py`** — единственный источник настроек, всё из переменных окружения:
-
-* `load_dotenv(BASE_DIR/'.env')` (не перекрывает уже заданные переменные);
-* `env_bool`, `env_list` — парсеры;
-* `DEBUG`, `SECRET_KEY` (в проде обязателен, иначе `ImproperlyConfigured`), `ALLOWED_HOSTS` (в DEBUG по умолчанию localhost/testserver), `CSRF_TRUSTED_ORIGINS`;
-* `INSTALLED_APPS`: admin, auth, contenttypes, sessions, messages, staticfiles, rest_framework, rest_framework.authtoken, corsheaders, api;
-* `MIDDLEWARE`: corsheaders первым, затем security, whitenoise, sessions, common, csrf, auth, messages, clickjacking;
-* CORS: в DEBUG без списка — `CORS_ALLOW_ALL_ORIGINS=True`; заголовок `x-device-id` разрешён явно;
-* `REST_FRAMEWORK`: аутентификация `DeviceAuthentication` → Token → Session; `IsAuthenticated`; `PageNumberPagination` по 20; `ScopedRateThrottle` со scope `analysis` (30/час) и `crud` (600/час);
-* БД: `DATABASE_URL` через `dj_database_url` (`conn_max_age=600`, `ssl_require=not DEBUG`), иначе SQLite только в DEBUG;
-* кеш: Redis при `REDIS_URL`, иначе `LocMemCache` (6 часов, 2000 записей);
-* внешние сервисы: `GEOCODER_CONTACT`, `TILE_SERVER_URL` (ArcGIS), `MAX_TILES_PER_REQUEST=64`, `HTTP_TIMEOUT_SECONDS=8`, `SOIL_MODEL_PATH` (по умолчанию `<repo>/ai model/soil_model.pth`);
-* безопасность в проде: `SECURE_PROXY_SSL_HEADER`, `SECURE_SSL_REDIRECT`, HSTS год, secure-cookies; всегда `X_FRAME_OPTIONS=DENY`, nosniff, referrer same-origin;
-* логирование в консоль, логгеры `django`, `django.db.backends` (по умолчанию WARNING), `api`;
-* `LANGUAGE_CODE='ru'`, `USE_TZ=True`, whitenoise `CompressedManifestStaticFilesStorage`.
-
-**`config/settings_test.py`** — `from .settings import *`, затем: `DEBUG=False`, тестовый SECRET_KEY, SQLite `:memory:`, locmem-кеш, throttle выключен (`None`), MD5-хеши паролей, обычное static storage, SSL-редирект выключен, логи только ERROR.
-
-**`config/urls.py`** — `admin/` и `api/` → `api.urls`.
-
-**`config/wsgi.py`** — добавляет `backend/` и его родителя в `sys.path`, экспортирует `application` и алиас `app` (наследие Vercel).
-
-**`config/asgi.py`** — стандартный ASGI, не используется в деплое.
-
-### 7.3 `backend/api/` — приложение
-
-**`api/apps.py`** — `ApiConfig`, BigAutoField.
-
-**`api/urls.py`** — 25 маршрутов, все перечислены в разделе 5.
-
-**`api/authentication.py`** — описано в разделе 4. Экспортирует `DeviceAuthentication`, константы `DEVICE_HEADER`, `USERNAME_PREFIX`, `NEW_DEVICE_LIMIT_PER_HOUR`, функцию `_client_ip`.
-
-**`api/permissions.py`** — `IsOwner` (объект принадлежит `request.user`, `NULL` = ничей) и `IsOwnerOfField` (владелец через `obj.field`; в проекте нигде не подключён).
-
-**`api/validators.py`** —
-* `parse_bbox(raw)`: принимает строку `"a,b,c,d"` или список; проверяет 4 числа, конечность, диапазоны (широта ≤ 85.05 из-за Web Mercator), порядок, размер ≤ 10°; бросает `BBoxError` с русским текстом;
-* `tile_span(bbox, zoom)`: сколько тайлов по x и y (импортирует `utils.tiles.deg2num` лениво, чтобы избежать циклического импорта);
-* `choose_zoom(bbox, preferred, max_tiles)`: снижает зум, пока тайлов не станет ≤ бюджета;
-* `metres_per_pixel(lat, zoom)`: разрешение пикселя тайла с учётом широты.
-
-**`api/serializers.py`** —
-* `FieldSerializer`: поля участка + `analyses_count`, `latest_fertility_index` (берутся из аннотаций queryset, иначе считаются запросом);
-* `CropTypeSerializer`, `CropTypeBriefSerializer` (короткая форма для рекомендаций);
-* `CropRotationSerializer` (+ `field_name`, `crop_type_name`);
-* `SoilAnalysisListSerializer` (без `overlay_image`, с `has_overlay`) и `SoilAnalysisDetailSerializer` (с картинкой);
-* `InvasiveSpeciesReportSerializer` / `...DetailSerializer` (с `image_base64`);
-* `GrowthMonitoringListSerializer` (`index_type` всегда `'ExG'`) / `...DetailSerializer` (с `ndvi_overlay`);
-* `WeedDatabaseSerializer`;
-* входные: `AnalyzeRequestSerializer` (`bbox` JSONField, `field_id`, `save_result`), `UrbanAnalyzeRequestSerializer` (+ `analysis_type`), `PlantingRecommendationRequestSerializer` (pH 0–14, NPK ≥ 0, влажность 0–100).
-
-**`api/views.py`** — все эндпоинты. Базовые классы:
-* `OwnedQuerysetMixin`: `get_queryset` фильтрует `model.objects.filter(user=request.user)`, `perform_create` подставляет `user`; throttle `crud`;
-* `AnalysisView(APIView)`: throttle `analysis`, `parse_request` валидирует тело, разбирает bbox, резолвит `field_id` через `get_object_or_404(Field, id=..., user=request.user)`;
-* `analysis_error_response(exc)` → 502 `{"error": str(exc)}`.
-
-Эндпоинты:
-* `SessionView.get` — `authenticated`, `user_id`, `fields_count`, `capabilities` (`sentinel.is_available()`, `osm_fields.is_available()`);
-* `AnalyzeView.post` — `fertility.analyze_fertility(bbox)` + `analyze_environment(bbox)`; при `save_result` и поле — создаёт `SoilAnalysis`, `non_fertile_percent = desert + water`, `notes = "Метод: …"`;
-* `FieldListCreateView` — аннотирует `analyses_count_annotated` (Count) и `latest_fertility_index_annotated` (Subquery последнего анализа), сортирует `-created_at, -id`;
-* `FieldDetailView` — RetrieveUpdateDestroy + `IsOwner`;
-* `FieldDetectView.post` — `lat`, `lon`, `radius_m` → `osm_fields.lookup_fields`; пусто → 404; отдаёт до 50 полигонов;
-* `CapabilitiesView.get` — флаги и названия источников;
-* `CropTypeListView`, `CropTypeDetailView`, `WeedDatabaseListView` — read-only справочники с `prefetch_related`;
-* `CropRotationListView` — список с фильтром `?field_id=`, `perform_create` проверяет, что `field.user_id == request.user.id` (единственное место с такой проверкой);
-* `CropRotationRecommendationView.get` — по последней записи севооборота отдаёт `good_successors`, иначе первые 3 культуры;
-* `CropPlantingRecommendationView.post` — прогоняет `check_soil_compatibility` по всем `CropType`, сортирует по проценту;
-* `SoilAnalysisListView` (фильтр `?field_id=`), `SoilAnalysisDetailView` (RetrieveDestroy + `IsOwner`), `SoilAnalysisTimeSeriesView` (массивы дат и процентов);
-* `GrowthMonitoringListView` (ListCreate), `GrowthMonitoringDetailView` (RetrieveDestroy + `IsOwner`);
-* `GrowthAnalyzeView.post` — `vegetation.analyze_vegetation(bbox)`; при сохранении `update_or_create(field, observation_date=today)` в колонки `ndvi_*`;
-* `GrowthTimeSeriesView.get` — ряд по полю + `vegetation.summarise_history`;
-* `InvasiveSpeciesListView` (ListCreate), `InvasiveSpeciesDetailView` (RetrieveUpdateDestroy + `IsOwner`);
-* `WeedDetectionView.post` — `weeds.detect_weeds(bbox)`; при сохранении `bulk_create` до 50 `InvasiveSpeciesReport`;
-* `UrbanAnalyzeView.post` — словарь `_PIPELINES` → `urban.detect_buildings` / `predict_development` / `filter_urban_areas`; ответ `{data, overlay, method[, legend]}`;
-* `DashboardView.get` — агрегаты по полям (`Count`, `Sum`), число активных отчётов, 5 последних анализов, 5 угроз.
-
-**`api/admin.py`** — регистрация всех 7 моделей с `list_display`, фильтрами, поиском по `user__email`, `fieldsets`, `autocomplete_fields` для севооборота, `list_editable=['status']` для отчётов.
-
-**`api/crop_catalog.py`** — статический `CROP_DATABASE` (39 культур: имя, иконка, диапазон pH, `temp_min`, `nitrogen_req`, описание) и `get_allowed_crops_for_country(name)` — грубый региональный фильтр (Средняя Азия / Казахстан / Россия-Беларусь-Украина / иначе `None` = без фильтра). Не связан с моделью `CropType`: используется для быстрой подсказки сразу после анализа.
-
-**`api/tests.py`** — 68 тестов, 18 классов: аутентификация устройства, изоляция данных между устройствами, read-only справочник, валидация bbox, бюджет тайлов, разрешение, вывод химии почвы, рекомендации культур, дашборд, размер ответов, честность ответов анализа (метод, 502 при отказе), троттлинг, профили индексов, фолбэк Sentinel, офсет отражения, маска облаков, достижимость классов плодородия, OSM-поля. Внешние сервисы замоканы.
-
-**`api/management/commands/`** — пусто, команд нет.
-
-**`api/migrations/`** — см. раздел 6.
-
-### 7.4 `backend/api/analysis/` — пайплайны анализа
-
-**`analysis/__init__.py`** — описание конвенций (docstring), кода нет.
-
-**`analysis/imagery.py`** — общие примитивы:
-* `AnalysisError` — исключение с пользовательским текстом;
-* `load_imagery(bbox, zoom)` → `utils.tiles.fetch_satellite_image`, `TileFetchError` переупаковывается в `AnalysisError`;
-* `encode_overlay(rgba)` → `data:image/png;base64,…` через `cv2.imencode`;
-* `excess_green_index(rgb)` — ExG = (2G−R−B)/(2G+R+B), клип [−1, 1]; явно «не NDVI»;
-* `local_variance(rgb, kernel=7)` — текстура через blur;
-* `water_mask(rgb)` — HSV-синий или очень тёмный **и** гладкий (иначе асфальт и крыши считались водой);
-* `paint`, `percentage`, `upsample_grid` (INTER_NEAREST).
-
-**`analysis/fertility.py`** —
-* константы: `ZOOM=13`, метки классов `L_BARE…L_VERY_HIGH`, `STEEP_SLOPE_PERCENT=15`, палитра `COLOURS`, `LEGEND`, пороги `_EXG_BANDS` (калиброваны под ArcGIS-подложку) и `_NDVI_BANDS` (0.15/0.30/0.45/0.60), `NDVI_WATER_THRESHOLD=−0.05`;
-* `model_enabled()` — `ENABLE_SOIL_MODEL_ON_TILES`;
-* `load_soil_model()` — ленивая загрузка ResNet-18 с 3 выходами из `settings.SOIL_MODEL_PATH`; без torch/весов → `(None, None)` и состояние `unavailable`;
-* `_classify_by_vegetation(index, land_mask, bands)` — `np.select` по порогам сверху вниз;
-* `_steep_terrain_mask(bbox, shape)` — `elevation.fetch_elevation_grid` → `slope_percent` → апсемплинг → `> 15 %`; без DEM маска пустая и `elevation_model=None`;
-* `_classify_with_model(image, labels, land_mask, grid_size=10)` — режет мозаику на 100 клеток, гонит батчем через ResNet, перекрашивает клетки с ≥ 50 % суши;
-* `_build_result(labels, bbox, method, imagery_meta)` — RGBA-оверлей, `np.bincount` по классам, статистика `very_high/high/moderate/low/mountains/water/desert`;
-* `_from_sentinel(bbox)` — NDVI + маска валидности → вода (`ndvi < −0.05`), крутизна, классификация; невалидные пиксели = `L_BARE`; `method = 'NDVI по Sentinel-2 + уклон по DEM'`;
-* `_from_basemap(bbox)` — RGB-мозаика → `water_mask` → крутизна → ExG-классы; опционально ResNet (`method` меняется на «ResNet-18 … (экспериментально)»);
-* `analyze_fertility(bbox)` — сначала Sentinel, при `SentinelUnavailable` → подложка.
-
-**`analysis/vegetation.py`** —
-* `IndexProfile` — пороги стадий роста, шкала здоровья, палитра для одного индекса; экземпляры `NDVI` (0.10/0.20/0.40/0.60, здоровье 0..0.85) и `EXG` (0.02/0.06/0.12/0.18, здоровье −0.10..0.25);
-* `_paint(index, profile, shape)` — раскраска, NaN прозрачный, ниже нижнего порога — «вода»;
-* `analyze_vegetation(bbox)` — Sentinel → фолбэк;
-* `_from_sentinel` — `sentinel.fetch_ndvi_stats` → статистика, оверлей, `index_type='NDVI'`;
-* `_from_basemap` — ExG по мозаике, `index_type='ExG'`;
-* `summarise_history(records)` — тренд по среднему второй половины ряда минус первой (порог ±0.03): `improving/declining/stable/insufficient_data`.
-
-**`analysis/weeds.py`** — `detect_weeds(bbox)`: зум 14; маска растительности по HSV; локальная дисперсия серого; аномалия = дисперсия выше 75-го перцентиля среди растительности; морфология close/open; контуры ≥ 100 px; для каждого — центр в градусах, площадь в м² через `imagery.pixels_to_area_sqm`, `severity` по площади (1 000 / 5 000 / 20 000 м²), `anomaly_strength`, рекомендация из `RECOMMENDATIONS`. Явно `is_species_identified: False`. Без растительности возвращает пустой результат с `note`.
-
-**`analysis/urban.py`** — три эвристики на оптике:
-* `detect_buildings` (зум 15): CLAHE → Canny → close → контуры; фильтр по площади ≥ 50 px, 3–6 вершин, соотношение сторон 0.2–5; плотность → тип района; список до 200 зданий с координатами и площадью;
-* `predict_development` (зум 14): застройка = дилатированные края; непригодное = вода ∪ лес (HSV); зона расширения = дилатация застройки ×5; свободная = расширение ∩ доступное; проценты, статус, рекомендации;
-* `filter_urban_areas` (зум 14): застройка = текстура минус (растительность ∪ вода); статистика `urban/veg/water_percent` и легенда.
-
-**`analysis/environment.py`** —
-* `analyze_environment(bbox)`: центр bbox → `geocoding.reverse_geocode_country`, `weather.fetch_weather`, `soilgrids.fetch_soil_properties`; влажность через `soilgrids.estimate_current_moisture(wv0033, осадки_7д)`; собирает `weather`, `soil_chemistry` (со словарём `sources`: measured/derived/unavailable), `warnings`, `recommendation` (`chemistry_recommendation`), `crops` (`recommend_crops`);
-* `recommend_crops(environment, limit=3)`: по `CROP_DATABASE` с региональным фильтром; баллы только по известным критериям (pH — 2, температура — 2, азот — 1); pH вне диапазона более чем на 0.5 → культура отбрасывается; < 50 % совпадения отбрасывается; топ-3.
-
-### 7.5 `backend/api/services/` — клиенты внешних сервисов
-
-**`services/__init__.py`** — конвенция: один модуль = один сервис; при отказе `None`.
-
-**`services/http.py`** — `build_session(user_agent)` и `get_json(session, url, params, timeout, service)`: GET, таймаут из настроек, любой отказ (таймаут, сеть, не-200, не-JSON) логируется и превращается в `None`.
-
-**`services/sentinel.py`** — Planetary Computer:
-* `is_available()` — только `DISABLE_SENTINEL`;
-* `_ndvi_expression(baseline)` — при baseline ≥ 4.0 (или неизвестном) формула `(B08−B04)/(B08+B04−2000)` с учётом `BOA_ADD_OFFSET`;
-* `search_scene(bbox, lookback=90, max_cloud=40)` — POST на STAC `/search`, последняя сцена; ошибки → `SentinelUnavailable`;
-* `_fetch_raster(bbox, size, params)` — GET `/item/bbox/{bbox}/{size}x{size}.npy` → `np.load`;
-* `fetch_ndvi_array(bbox, size=512)` — кеш `sentinel-ndvi:<size>:<bbox 4 знака>` на 6 часов; параллельно качает NDVI и SCL (`ThreadPoolExecutor(2)`); валидные классы SCL 4,5,6,7,11; покрытие < 50 % → `SentinelUnavailable`; кладёт в кеш `(ndvi.tolist(), valid.tolist(), metadata)`; `metadata.metres_per_pixel` всегда 10;
-* `fetch_ndvi_stats(bbox)` — mean/min/max/std по валидным пикселям + сырые массивы.
-
-**`services/soilgrids.py`** — ISRIC SoilGrids v2.0, слой 0–5 см, кеш 30 дней по координатам с 3 знаками:
-* `_extract_layers(payload)` — значения делятся на `d_factor` (или фолбэк-таблицу);
-* выводные формулы: доступный N = общий N × 1000 × 2 %; обменный K = CEC × 3 % × 391; Olsen-P ≈ 4 + 1.1·SOC − 0.15·max(0, clay−30), клип 3..60; `_texture_label(clay, sand)`;
-* `fetch_soil_properties(lat, lon)` — `{ph, texture, organic_carbon, clay_percent, water_holding_capacity, nitrogen, potassium, phosphorus, provider, depth}` с `source` у каждого; без `phh2o` → негативный кеш на час и `None`;
-* `estimate_current_moisture(whc, rain_7d)` — `whc × (0.4 + 0.6 × min(1, rain/25))`.
-
-**`services/weather.py`** — Open-Meteo forecast: текущие температура, влажность, ветер (м/с), код погоды → `describe_weather_code`; `daily.precipitation_sum` с `past_days=7` → сумма за 7 прошедших дней; кеш 30 минут по координатам с 2 знаками; отказ → негативный кеш 5 минут.
-
-**`services/elevation.py`** — Open-Meteo Elevation (Copernicus GLO-90): `_grid_coordinates` (10×10 центров ячеек, строка 0 — север), `fetch_elevation_grid(bbox)` (один запрос на 100 точек, кеш 90 дней), `slope_percent(grid, bbox)` (`np.gradient` с реальным шагом в метрах, `hypot × 100`).
-
-**`services/geocoding.py`** — Nominatim reverse с `zoom=5`, `accept-language=ru`, User-Agent с `GEOCODER_CONTACT`; кеш 30 дней по координатам с 1 знаком; при отказе `approximate_country(lat, lon)` по прямоугольникам стран (порядок: от меньших к большим) и флаг `is_approximate=True`.
-
-**`services/osm_fields.py`** — Overpass: `_build_query` (`way`/`relation` с `landuse~farmland|meadow|orchard|vineyard|greenhouse_horticulture|allotments` в радиусе), `_ring_area_sqm` (формула шнурков на локальной плоскости), `_element_to_feature` (→ `{id, type, type_label, name, crop, area_sqm, area_hectares, bounds [[lat,lon]…], bbox, source}`), `lookup_fields(lat, lon, radius)` (радиус клипуется 100..5000, кеш 7 дней, пусто → негативный кеш 6 часов и `None`), `nearest_field` (содержащий точку, иначе крупнейший; в проекте не вызывается).
-
-### 7.6 `backend/utils/tiles.py`
-
-Единственное место, которое ходит на тайл-сервер:
-* `SatelliteImage` — dataclass: `pixels` (H×W×3 uint8), `bounds` `[[min_lat,min_lon],[max_lat,max_lon]]`, `zoom`, `metres_per_pixel`, `tiles_requested/retrieved`, метод `pixels_to_area_sqm`;
-* `deg2num` / `num2deg` — стандартные преобразования slippy-map;
-* `download_tile(x, y, z)` — кеш `tile:z:x:y` на 7 дней (негативный кеш `b''` на 404), таймаут `HTTP_TIMEOUT_SECONDS`, декодирование через Pillow;
-* `fetch_satellite_image(bbox, zoom=13)` — `choose_zoom` по бюджету `MAX_TILES_PER_REQUEST`, параллельная загрузка (8 потоков), склейка в мозаику; 0 тайлов или меньше половины → `TileFetchError`.
-
-Папка `utils/` без `__init__.py` работает как namespace-пакет.
-
-### 7.7 `frontend/`
-
-**`index.html`** — одна страница: сайдбар (Дашборд, Карта & Анализ, выбор темы), секция дашборда (5 карточек статистики, история активности, сводка), секция анализа (карта Leaflet, тулбар с `<select id="analysis-type-select">` и кнопкой «Анализировать», кнопка PDF через `window.print()`, панель привязки к полю с `#field-select`, форма создания поля, скрытая кнопка `#detect-field-btn`, блок ошибок, легенда, `#results-container`). Leaflet 1.9.4 и leaflet.draw 1.0.4 с CDN (с SRI). Приложение подключено как `<script type="module" src="/script.js">`, что даёт Vite собрать бандл. В `<style>` в шапке принудительно скрыты `.env-icon` и `.forecast-icon`.
-
-**`script.js`** — вся логика (1386 строк), ключевые части:
-* `API_URL`: `http://127.0.0.1:8000/api` на localhost/file, иначе `/api`;
-* `getDeviceId` / `fallbackUuid` / `getAuthHeaders` — идентичность устройства;
-* `escapeHtml`, `formatNumber`, `formatDate`, `readList` (распаковка пагинации);
-* `checkAuthSession` — `GET /session/`, применяет `capabilities` (`applyCapabilities` показывает кнопку автоопределения);
-* `LAND_PRICES` + `getLandPriceConfig` — справочные цены земли по стране (жёстко зашиты, помечены как ориентир);
-* `lookupPlace` — прямой вызов Nominatim из браузера с кешем по 3 знакам;
-* `changeTheme` — переключение CSS-переменных, сохранение в `localStorage`;
-* `sessionStats` — счётчики сессии (анализов, здоровья, сорняков, активности), таймер;
-* `DOMContentLoaded`: `initMap`, `switchPage('analysis')`, `checkAuthSession`, `loadFields`, тема, обработчик выбора поля (рисует полигон из `bounds_json`, `fitBounds`), дата печати;
-* `loadFields` — `GET /fields/` → `<select>`;
-* `saveFieldFromMap` — сохраняет прямоугольник `currentBounds` как поле (`POST /fields/`), площадь по плоской формуле;
-* `switchPage`, `setAnalysisType` (заголовки, сброс оверлея/легенды/результатов);
-* `initMap` — карта на Душанбе (38.55, 68.78, зум 12), ArcGIS-подложка, `L.FeatureGroup` + `L.Control.Draw` с `draw: false` (только редактирование), `moveend` → `currentBounds = map.getBounds()`, если нет нарисованного слоя;
-* `runAnalysis` — bbox из `currentBounds`, выбор эндпоинта по `currentAnalysisType`, `field_id` из селекта, `save_result` из `#save-result-check`, `POST`, ошибки → `describeHttpError` (401/429/400/502 с текстом сервера);
-* `updateDashboard` — статистика сессии, курсы валют с `api.exchangerate-api.com`, справочная стоимость земли, 3-дневный прогноз Open-Meteo, последняя активность;
-* `renderResult(data)` — обновляет счётчики, ставит `L.imageOverlay`, `updateLegend`, строит HTML для зелёности / плодородия / сорняков / инфраструктуры / прогноза застройки / агроклимата (с бейджами «измерено / расчёт / нет данных») и карточек культур (`renderCropsBottom`); `renderImageryNote` показывает источник, дату съёмки, провайдера, м/пиксель, облачность, DEM;
-* `detectField` — `POST /fields/detect/` → полигон первого участка на карту;
-* `renderBar`, `updateLegend` (легенда сервера или дефолтные для ndvi/weeds), `setLoading`, `setError`.
-
-**`style.css`** — тёмная тема по умолчанию через CSS-переменные, шрифт Outfit с Google Fonts, макет сайдбар + контент, карточки, бейджи, бары статистики, легенда, лоадер, печать (`.print-header`).
-
-**`vite.config.js`** — `outDir: dist`, sourcemap, порт 5173, прокси `/api` → `http://127.0.0.1:8000`.
-
-**`package.json`** — `dev`/`build`/`preview`/`test`; зависимость `leaflet` (фактически грузится с CDN), dev: `vite ^5`, `jsdom ^25`.
-
-**`test/smoke.test.mjs`** — грузит `dist/index.html` и бандл в jsdom, подменяет `L` и `fetch`, проверяет 28 утверждений: рендер плодородия, XSS-экранирование, зелёность ExG/NDVI, отсутствие `null` при пустых данных, дату съёмки Sentinel-2, тексты ошибок для 400/502/429/401, отсутствие ошибок в консоли.
-
-**`dist/`** — результат `vite build` (в git не входит).
-
-### 7.8 `ai model/`
-
-**`distribute_dataset.py`** — одноразовый скрипт с абсолютными Windows-путями: раскладывает Soil-Classification-Dataset (Alluvial/Black → high, Red/Yellow/Mountain → medium, Arid/Laterite → low) на train/val 80/20.
-
-**`train.py`** — дообучение ResNet-18 (`pretrained=True`, старый API torchvision) на `./dataset`, 10 эпох, Adam 1e-3, сохраняет `soil_model.pth` (state_dict).
-
-**`predict.py`** — CLI: `--image`, `--model`; загружает state_dict, классифицирует один снимок, печатает класс, уверенность, описание и рекомендацию. `CLASS_NAMES` в алфавитном порядке ImageFolder: `high_fertility, low_fertility, medium_fertility`.
-
-**`soil_model.pth`** — веса, 44.8 МБ, лежат в git как обычный blob (не LFS-указатель).
-
-Модель обучена на макроснимках почвы с земли; применение к спутниковым тайлам в `fertility._classify_with_model` не валидировано и выключено по умолчанию.
+## 8. Источники данных и методики
+
+### 8.1 Плодородие (`analysis/fertility.py`)
+
+Один снимок NDVI измеряет зелёность в конкретный день, а не плодородие: пар
+на плодородной земле выглядит голой почвой. Поэтому индекс собирается из
+слоёв, и каждый назван в `components` ответа:
+
+1. **Продуктивность**, вес 0.65: попиксельный пик и среднее NDVI по лучшей
+   сцене на каждый месяц апрель–сентябрь за 3 последних года (облачность
+   < 25 %, до 18 сцен, растр 256×256, параллельная загрузка).
+2. **Почва**, вес 0.35: `soilgrids.soil_quality_score` из pH (оптимум
+   6.0–7.5), органического углерода (20 г/кг = 1.0), ЁКО (25 = 1.0) и
+   текстуры (песок ≥ 70 % → 0.4, глина ≥ 60 % → 0.6). Если SoilGrids пуст
+   (города, вода), вес продуктивности становится 1.0 и это отмечается в
+   `components.soil.note`.
+3. **Покров**: вода, застройка, снег по WorldCover исключаются и показываются
+   отдельными классами.
+4. **Уклон**: > 15 % по Copernicus GLO-90 → «горы», непригодно.
+
+Фолбэки по порядку: меньше 3 сезонных сцен → последняя одиночная сцена
+NDVI; Planetary Computer недоступен → ExG по RGB-подложке ArcGIS. `method`
+всегда называет, что сработало. Холодный расчёт 30–50 секунд, кеш 7 дней.
+
+### 8.2 Зелёность (`analysis/vegetation.py`)
+
+NDVI последней сцены за 90 дней с облачностью < 40 % и покрытием валидными
+пикселями ≥ 50 % (маска SCL: классы 4, 5, 6, 7, 11). Дополнительно NDMI по
+B08/B11 той же сцены и отклонение от NDVI того же календарного окна за два
+прошлых года. Стадия роста и «здоровье» по порогам `IndexProfile`
+(отдельные для NDVI и ExG). Фолбэк ExG даёт `index_type: "ExG"`, чтобы
+сохранённый ряд читался правильно.
+
+### 8.3 Офсет отражения Sentinel-2
+
+С версии обработки 04.00 (январь 2022) продукты L2A содержат
+`BOA_ADD_OFFSET = -1000`. В NDVI офсет сокращается в числителе, но не в
+знаменателе, поэтому формула `(B08 − B04) / (B08 + B04 − 2000)` применяется
+только к сценам с baseline ≥ 4.0. Замер по одному полю под Ташкентом: без
+офсета NDVI 0.333, с офсетом 0.494, то есть одна стадия роста разницы. Тесты
+`ReflectanceOffsetTests` фиксируют оба случая.
+
+### 8.4 Сорняки (`analysis/weeds.py`)
+
+10-метровый пиксель не определяет вид растения. Эндпоинт находит участки,
+где NDVI отличается от медианы поля более чем на 2 MAD, только внутри
+пашни, луга и кустарника по WorldCover, отмечает направление
+(«зеленее»/«бледнее»), площадь ≥ 400 м² и серьёзность по площади. В ответе
+`is_species_identified: false` и `note` об этом. Фолбэк без Sentinel: старая
+текстурная дисперсия по RGB.
+
+### 8.5 Застройка и покров (`analysis/urban.py`)
+
+* `infrastructure`: класс «застройка» WorldCover + контуры зданий OSM через
+  Overpass (область до 12 км², до 3000 зданий). Фолбэк: Canny-контуры.
+* `prediction` («Динамика застройки»): WorldCover 2020 → 2021, изменение в
+  процентных пунктах, новая застройка на оверлее, свободная пашня/луг рядом.
+* `urban_filter` («Покров земли»): 11 классов WorldCover с официальной
+  легендой и заявленной точностью.
+
+### 8.6 Агроклимат (`analysis/environment.py`, `services/soilgrids.py`)
+
+SoilGrids v2.0, слой 0–5 см, 250 м: pH, органический углерод, ЁКО, глина,
+песок, влагоёмкость, каждое с диапазоном Q5–Q95. Выведенные величины:
+доступный N = общий N × 2 %; обменный K = ЁКО × 3 % × 391; Olsen-P ≈ 4 +
+1.1·SOC − 0.15·max(0, глина − 30). Влажность = влагоёмкость × (0.4 + 0.6 ×
+min(1, осадки за 7 дней / 25)). Каждое значение несёт `source`: `measured`,
+`derived` или `unavailable`; отказ сервиса даёт `null`.
+
+Подбор культур: статический каталог `crop_catalog.py` с региональным
+фильтром по стране из Nominatim; баллы по pH, температуре и азоту, культуры
+с pH вне диапазона более чем на 0.5 отбрасываются, топ-3.
+
+### 8.7 Границы участков (`services/osm_fields.py`)
+
+Overpass ищет `landuse` farmland, meadow, orchard, vineyard,
+greenhouse_horticulture, allotments в радиусе 100–5000 м. Возвращается то,
+что размечено людьми: в Европе плотно, вокруг Ташкента пусто даже на 8 км.
+Пусто → 404 и негативный кеш на 6 часов.
+
+### 8.8 Кеширование и бережное отношение к сервисам
+
+| Сервис | Кеш |
+|---|---|
+| Sentinel-2 сцена | 6 часов, массивы сжаты через `np.savez_compressed` (~0.3 МБ на запись) |
+| Сезонная продуктивность | 7 дней |
+| WorldCover | 30 дней |
+| Overpass (здания, поля) | 7 дней |
+| SoilGrids | 30 дней, негативный кеш 1 час |
+| Open-Meteo погода | 30 минут |
+| Open-Meteo рельеф | 90 дней |
+| Тайлы ArcGIS | 7 дней |
+| Nominatim | 30 дней |
+
+У каждого запроса таймаут `HTTP_TIMEOUT_SECONDS` (8 с), User-Agent
+идентифицирует приложение, число тайлов на запрос ограничено
+`MAX_TILES_PER_REQUEST` (64). Без `REDIS_URL` кеш живёт в памяти каждого
+воркера отдельно и теряется при рестарте.
 
 ---
 
-## 8. Найденные ошибки и риски
+## 9. Разбор файлов
 
-Отсортированы по серьёзности. «Подтверждено» означает, что дефект воспроизведён в этой сессии.
+### 9.1 Корень репозитория
 
-**Статус на 13 сентября 2026 (после доработки, см. раздел 10):** исправлены пункты 1, 2, 3, 6, 7, 8, 9, 13. Пункты 4, 5, 10, 11, 12 и остальные требуют действий вне кода (переменные окружения, LFS, Redis, деплой) и остаются открытыми.
+* **`Dockerfile`**: `python:3.12-slim`, `libgl1` и `libglib2.0-0` для OpenCV,
+  копирует только `backend/`, `collectstatic` при сборке, непривилегированный
+  пользователь, `gunicorn config.wsgi:application --bind 0.0.0.0:${PORT:-8000}
+  --workers 2 --threads 4 --timeout 120`. Папка `ai model` в образ не
+  попадает.
+* **`railway.toml`**: сборка из Dockerfile, `preDeployCommand` с миграциями,
+  health-check `/api/health/`, рестарт при падении. В шапке перечислены
+  переменные, которые нужно задать в Railway.
+* **`vercel.json`** и **`frontend/vercel.json`**: раздача статики и rewrite
+  `/api/(.*)` на Railway (см. 4.2).
+* **`.vercelignore`**: исключает `backend`, `ai model`, venv, requirements,
+  Dockerfile, CI и веса модели из загрузки на Vercel.
+* **`.dockerignore`**: исключает `.git`, venv, `node_modules`, `frontend/dist`,
+  `backend/.env`, SQLite, `ai model`, логи.
+* **`package.json`** (корень): скрипты-обёртки `build`, `dev` → `frontend/`,
+  `test` → Django-тесты.
+* **`pyproject.toml`**: ruff, длина строки 100, правила F/E/W/I/B/UP/C4.
+* **`requirements.txt`**: рантайм с пинами (Django 5.2.16, DRF 3.17.1,
+  numpy 2.5.1, opencv-python-headless, gunicorn, whitenoise, dj-database-url,
+  psycopg2-binary). **`requirements-ml.txt`**: torch, torchvision, tqdm.
+* **`.gitattributes`**: LF для исходников, `*.pth` объявлен как Git LFS.
+* **`.github/workflows/ci.yml`**: см. раздел 10.
 
-### Критичные (ломают основную функциональность или безопасность)
+### 9.2 `backend/` и `backend/config/`
 
-**1. Результаты анализа никогда не сохраняются из интерфейса.** Подтверждено.
-`frontend/script.js:554` читает чекбокс `#save-result-check`, которого нет в `index.html`. Поэтому `save_result` всегда `false`, и ветки сохранения в `backend/api/views.py:146` (SoilAnalysis), `:445` (GrowthMonitoring), `:525` (InvasiveSpeciesReport) из UI недостижимы. История анализов, временные ряды, дашборд бэкенда и связка «поле → анализы» пусты для всех пользователей. Исправление: добавить чекбокс «Сохранить результат» в панель привязки к полю, либо сохранять автоматически, когда выбрано поле.
+* **`manage.py`**: выбирает `config.settings_test` при команде `test`.
+* **`config/settings.py`**: всё из переменных окружения. `DEBUG`,
+  `SECRET_KEY` (обязателен в проде), `ALLOWED_HOSTS` (+ `RAILWAY_PUBLIC_DOMAIN`
+  и `healthcheck.railway.app` автоматически), `CSRF_TRUSTED_ORIGINS`; CORS
+  (в DEBUG все origin, заголовок `x-device-id` разрешён); DRF: аутентификация
+  Device → Token → Session, `IsAuthenticated`, пагинация 20, `ScopedRateThrottle`;
+  БД через `dj_database_url` (`conn_max_age=600`, `ssl_require` в проде);
+  кеш Redis или locmem; параметры внешних сервисов; в проде
+  `SECURE_PROXY_SSL_HEADER`, `SECURE_SSL_REDIRECT` с исключением для
+  `api/health/`, HSTS, secure-cookies; логирование в консоль; `LANGUAGE_CODE='ru'`;
+  whitenoise.
+* **`config/settings_test.py`**: `DEBUG=False`, тестовый секрет, SQLite
+  `:memory:`, locmem, throttle выключен, MD5-хеши, SSL-редирект выключен.
+* **`config/urls.py`**: `admin/` и `api/`. **`config/wsgi.py`**: `application`
+  и алиас `app`. **`config/asgi.py`**: не используется.
 
-**2. Запись в чужие участки через `/api/growth/` и `/api/invasive/`.** Подтверждено (оба запроса вернули 201).
-`GrowthMonitoringListView` (`views.py:422`) и `InvasiveSpeciesListView` (`views.py:502`) используют `perform_create` из `OwnedQuerysetMixin`, который подставляет `user`, но не проверяет владельца `field`. `InvasiveSpeciesDetailView` (`views.py:510`) через PUT тоже позволяет переназначить `field`. Проверка есть только в `CropRotationListView.perform_create` (`views.py:306`). Дополнительный эффект: `GrowthMonitoring` имеет `unique_together (field, observation_date)`, поэтому чужая запись на сегодняшнюю дату перехватывается `update_or_create` жертвы и перезаписывается. Исправление: вынести проверку из `CropRotationListView` в `validate_field` сериализаторов или в общий миксин.
+### 9.3 `backend/api/`
 
-**3. CI-шаг «Run tests» падает.** Подтверждено симуляцией без `.env`.
-`config/settings_test.py` начинается с `from .settings import *`; `settings.py:49` бросает `ImproperlyConfigured` о `DJANGO_SECRET_KEY`, потому что в CI нет `.env` и `DJANGO_DEBUG` не задан. Локально всё проходит только благодаря `.env` с `DJANGO_DEBUG=True`. Исправление: в `settings_test.py` перед импортом сделать `os.environ.setdefault('DJANGO_DEBUG', 'True')` и `setdefault('DJANGO_SECRET_KEY', 'test')`, либо добавить `env:` в шаг CI.
+* **`urls.py`**: 26 маршрутов из раздела 6.
+* **`authentication.py`**: раздел 5.
+* **`permissions.py`**: `IsOwner` (объект принадлежит `request.user`) и
+  `IsOwnerOfField` (не подключён).
+* **`validators.py`**: `parse_bbox` (строка или список, 4 конечных числа,
+  широта ≤ 85.05, порядок, ≤ 10°), `tile_span`, `choose_zoom` (снижает зум
+  до бюджета тайлов), `metres_per_pixel`.
+* **`serializers.py`**: сериализаторы моделей (list-варианты без картинок,
+  detail с картинками), `OwnedFieldMixin.validate_field`, входные
+  `AnalyzeRequestSerializer`, `UrbanAnalyzeRequestSerializer`,
+  `FieldDetectRequestSerializer` (`lat`, `lon`, `radius_m` 100–5000),
+  `PlantingRecommendationRequestSerializer`.
+* **`views.py`**: базовые `OwnedQuerysetMixin` (queryset по `request.user`,
+  `perform_create` подставляет владельца) и `AnalysisView` (`parse_request`);
+  `HealthView` (без auth/throttle/БД); остальные эндпоинты из раздела 6.
+  `FieldListCreateView` аннотирует число анализов и последний индекс, чтобы
+  не делать по два запроса на поле. `UrbanAnalyzeView` выбирает пайплайн из
+  словаря `_PIPELINES`. `DashboardView` собирает агрегаты по полям, активные
+  отчёты, 5 последних анализов и 5 угроз.
+* **`admin.py`**: регистрация 7 моделей с фильтрами и поиском по владельцу.
+* **`crop_catalog.py`**: статический каталог культур для быстрой подсказки
+  после анализа, не связан с `CropType`.
+* **`tests.py`**: 90 тестов в 27 классах, внешние сервисы замоканы; см.
+  раздел 10.
+* **`fixtures/initial_data.json`**, **`migrations/`**: раздел 7.
+* **`management/commands/`**: пустой пакет.
 
-**4. Локальный `.env` направляет разработку в продовую БД и открывает DEBUG.**
-`backend/.env`: `DJANGO_DEBUG=True`, `DJANGO_ALLOWED_HOSTS=*`, `DATABASE_URL` на Neon. `runserver`, `migrate`, `loaddata` и любые ручные эксперименты идут в хостинговую базу. Если этот же файл используется как источник переменных на хостинге, сайт работает с `DEBUG=True` (трейсбеки с настройками наружу, `CORS_ALLOW_ALL_ORIGINS=True`, `ssl_require=False`). Исправление: локально убрать `DATABASE_URL` (SQLite), прод-переменные задавать в панели платформы с `DJANGO_DEBUG=False`.
+### 9.4 `backend/api/analysis/`
 
-**5. Деплой фронтенда на Vercel неработоспособен.**
-`vercel.json` проксирует `/api` на `https://REPLACE-WITH-YOUR-BACKEND-HOST/…` — плейсхолдер, все запросы уйдут в никуда. Кроме того, `buildCommand: npm run build` выполняется из корня, где `package.json` не имеет зависимостей; `vite` лежит только в `frontend/node_modules`, так что без `installCommand: npm ci --prefix frontend` (или `rootDirectory: frontend`) сборка, скорее всего, упадёт с «vite: command not found». Не запускалось на Vercel, вывод по конфигурации.
+* **`imagery.py`**: `AnalysisError`, `load_imagery` (тайлы → `AnalysisError`
+  при отказе), `encode_overlay` (RGBA → data-URI PNG), `excess_green_index`,
+  `local_variance`, `water_mask`, `paint`, `percentage`, `upsample_grid`.
+* **`fertility.py`**, **`vegetation.py`**, **`weeds.py`**, **`urban.py`**,
+  **`environment.py`**: раздел 8. В `fertility.py` также ленивая загрузка
+  ResNet-18 за флагом `ENABLE_SOIL_MODEL_ON_TILES` (не валидирована на
+  спутниковых тайлах, по умолчанию выключена).
 
-### Серьёзные
+### 9.5 `backend/api/services/`
 
-**6. 500 на `/api/fields/detect/` при нечисловом `radius_m`.** Подтверждено (`ValueError` в `osm_fields.py:122`). `views.py:227` передаёт значение как есть. Исправление: валидировать через сериализатор с `IntegerField(min_value=100, max_value=5000)`.
+Один модуль = один внешний сервис; при отказе `None`, никаких выдуманных
+значений.
 
-**7. Пользователь не может нарисовать область.** `script.js:503` создаёт `L.Control.Draw` с `draw: false`, поэтому событие `L.Draw.Event.CREATED` не срабатывает никогда, а `currentBounds` всегда равен видимой области карты. Надпись «Выберите область на карте» вводит в заблуждение; при зуме ниже ~7 запрос получает 400 «область слишком велика», при среднем зуме бэкенд снижает разрешение до 64 тайлов. Сохранённое «поле» — это прямоугольник экрана. Исправление: включить `draw: { rectangle: true, polygon: true, … }`.
+* **`http.py`**: `build_session(user_agent)`, `get_json` с таймаутом и
+  логированием отказов.
+* **`sentinel.py`**: `is_available` (`DISABLE_SENTINEL`), `search_scene`,
+  `search_scenes`, `fetch_ndvi_array` / `fetch_ndvi_stats` (NDVI + SCL
+  параллельно), `fetch_seasonal_productivity`, `fetch_ndmi_mean`,
+  `fetch_reference_ndvi`, `resolution_for` (честные м/пиксель по размеру
+  bbox), `_pack/_unpack` (сжатый кеш), `_ndvi_expression(baseline)` с офсетом.
+* **`worldcover.py`**: `fetch_landcover(bbox, year, size)`,
+  `class_percentages`, `paint`, `legend`; `DISABLE_WORLDCOVER`.
+* **`buildings.py`**: `lookup_buildings(bbox)` через Overpass `way["building"]`,
+  отказ при площади > 12 км².
+* **`soilgrids.py`**: `fetch_soil_properties(lat, lon)`, `soil_quality_score`,
+  `estimate_current_moisture`, выводные формулы из 8.6.
+* **`weather.py`**: Open-Meteo, текущая погода и осадки за 7 дней.
+* **`elevation.py`**: сетка 10×10 высот, `slope_percent` через `np.gradient`
+  с реальным шагом в метрах.
+* **`geocoding.py`**: Nominatim reverse с `GEOCODER_CONTACT`, фолбэк
+  `approximate_country` по прямоугольникам стран с флагом `is_approximate`.
+* **`osm_fields.py`**: `lookup_fields(lat, lon, radius)`, площадь по формуле
+  шнурков, `nearest_field` (не вызывается).
 
-**8. Кеш Sentinel съедает память.** `sentinel.py:265` кладёт 512×512 NDVI и маску как Python-списки; измеренный размер одной записи после pickle — 2.6 МБ. При `MAX_ENTRIES=2000` в locmem это до ~5 ГБ на процесс, а gunicorn запускает два. Исправление: хранить `np.save` в bytes или float16 и уменьшить TTL/лимит.
+### 9.6 `backend/utils/tiles.py`
 
-**9. Неверная метка разрешения для Sentinel-2.** `sentinel.py:261` всегда пишет `metres_per_pixel: 10`, хотя растр 512×512 растягивается на любой bbox (для области 20 км это 40 м/пиксель). UI показывает «10 м/пиксель». Исправление: считать `(max_lon−min_lon)·111320·cos(lat)/size`.
+Единственное место, которое ходит на тайл-сервер: `SatelliteImage`,
+`deg2num`/`num2deg`, `download_tile` (кеш 7 дней, негативный кеш на 404,
+таймаут), `fetch_satellite_image` (бюджет тайлов, 8 потоков, склейка;
+меньше половины тайлов → `TileFetchError`).
 
-**10. Веса модели в git как 44 МБ blob при объявленном LFS.** `.gitattributes` требует LFS для `*.pth`, `git lfs` на машине не установлен, файл закоммичен обычным объектом. У коллеги с LFS `git add` создаст указатель, и история станет несогласованной; каждый клон качает 44 МБ. Исправление: либо `git lfs migrate import --include="*.pth"`, либо убрать правило и хранить веса вне git.
+### 9.7 `frontend/`
 
-**11. Лимит 20 новых устройств в час на IP блокирует пользователей за NAT.** `authentication.py:33`. В вузе, офисе или у мобильного оператора 21-й новый посетитель получает 401 и сообщение «обновите страницу», которое не помогает. При этом `_client_ip` (`authentication.py:96`) доверяет `X-Forwarded-For` от любого клиента, так что лимит обходится подделкой заголовка. Исправление: считать по реальному адресу за доверенным прокси и поднять лимит либо заменить на глобальный.
+* **`index.html`**: одна страница. Сайдбар (Дашборд, Карта & Анализ, тема),
+  дашборд (карточки статистики, история активности, сводка), секция анализа
+  (карта Leaflet, `<select id="analysis-type-select">` с шестью типами,
+  кнопка «Анализировать», печать через `window.print()`, панель привязки к
+  полю с `#field-select`, чекбокс «Сохранить результат», форма создания поля,
+  кнопка автоопределения контура, блок ошибок, легенда, `#results-container`).
+  Leaflet 1.9.4 и leaflet.draw с CDN. Приложение подключено как
+  `<script type="module" src="/script.js">`, чтобы Vite собрал бандл.
+* **`script.js`** (~1500 строк): `API_URL` (`http://127.0.0.1:8000/api` на
+  localhost и file://, иначе `/api`); идентичность устройства
+  (`getDeviceId`, `getAuthHeaders`); `checkAuthSession` (`GET /session/`,
+  включает кнопку автоопределения по `capabilities`, при не-2xx показывает
+  «Не удалось установить сессию с сервером», при сетевой ошибке «Сервер
+  недоступен»); `loadFields`, `saveFieldFromMap`; `initMap` (центр Душанбе,
+  ArcGIS-подложка, рисование прямоугольника и полигона, `moveend` →
+  `currentBounds`); `runAnalysis` (выбор эндпоинта по типу, `field_id`,
+  `save_result`, ошибки через `describeHttpError` для 400/401/429/502);
+  `renderResult` и вспомогательные рендеры (компоненты плодородия, бейджи
+  измерено/расчёт/нет данных, дата и разрешение снимка, карточки культур);
+  `updateDashboard` (счётчики сессии, курсы валют с exchangerate-api,
+  справочные цены земли, 3-дневный прогноз Open-Meteo, обратное
+  геокодирование Nominatim прямо из браузера); темы через CSS-переменные.
+* **`style.css`**: тёмная тема по умолчанию, шрифт Outfit, макет сайдбар +
+  контент, печать.
+* **`vite.config.js`**: `outDir: dist`, sourcemap, порт 5173, прокси `/api`
+  → `http://127.0.0.1:8000`.
+* **`test/smoke.test.mjs`**: грузит `dist/index.html` и бандл в jsdom,
+  подменяет `L` и `fetch`, 37 проверок: рендер плодородия, XSS-экранирование,
+  зелёность ExG/NDVI, отсутствие `null` при пустых данных, дата съёмки,
+  тексты ошибок 400/502/429/401, чистая консоль.
+* **`vercel.json`**: раздел 4.2. **`dist/`**: результат сборки, не в git.
 
-**12. Троттлинг и кеш живут в памяти процесса.** Без `REDIS_URL` при двух воркерах лимиты 30/час фактически 60/час, кеш тайлов и SoilGrids дублируется, а `device-registrations` считается раздельно. README это признаёт, но в проде это надо закрыть Redis.
+### 9.8 `ai model/`
 
-### Средние
-
-**13. Незаданная CSS-переменная `--primary-rgb`.** `index.html:168`, `script.js:646`, `:1162` используют `rgba(var(--primary-rgb), 0.1)`; переменной нет ни в `style.css`, ни в `changeTheme`. Фон этих элементов не рисуется.
-
-**14. Незаэкранированные вставки в innerHTML.** `script.js:855–858` (`last.text`, `last.type`, `last.time`), `:1062` (`building_density`), `:1076` (`growth_status`). Значения приходят с сервера, поэтому XSS возможен только при компрометации бэкенда или MITM, но проект в остальном экранирует всё через `escapeHtml`, и эти места выбиваются.
-
-**15. Base64-картинки в TEXT-колонках.** `SoilAnalysis.overlay_image`, `GrowthMonitoring.ndvi_overlay`, `InvasiveSpeciesReport.image_base64` — до сотен КБ на строку. На бесплатном Neon это быстро упирается в квоту. Разумнее хранить файлы в объектном хранилище или ужимать PNG.
-
-**16. Внешние вызовы прямо из браузера.** `script.js:149` (Nominatim без идентифицирующего User-Agent, который браузер не даёт задать) и `:662` (`api.exchangerate-api.com`, без ключа и SLA). Первый нарушает политику Nominatim при частом обновлении дашборда, второй может пропасть в любой момент; оба тянутся при каждом `updateDashboard`.
-
-**17. Ненадёжный `bounds_json`.** `FieldSerializer` принимает любую строку; `JSON.parse` на фронтенде упадёт тихо в `console.error`. Стоит валидировать JSON и структуру полигона на сервере.
-
-**18. Разные версии Python.** Локальный venv — Python 3.14.5, Dockerfile — 3.12, ruff `target-version` — py311. Тесты локально проходят, но поведение зависимостей на 3.14 и 3.12 может отличаться.
-
-**19. Курс валют и стоимость земли выдуманы.** `LAND_PRICES` в `script.js:114` жёстко зашиты и показываются в карточке «Стоимость земли» на дашборде. Подписано как ориентир, но в главной статистике выглядит как факт.
-
-### Мелкие
-
-**20. Испорченные эмодзи в разметке.** В `index.html` и `script.js` (заголовки, `getIconForType`, тексты кнопок) остались одиночные символы U+FE0F без базового эмодзи и пустые `<span class="nav-item-icon">`. В шапке `index.html` иконки прогноза и агроклимата принудительно скрыты `display:none !important`.
-
-**21. Кнопка меняет подпись.** `setLoading(false)` ставит текст « Анализировать состояние», хотя исходно было «Анализировать».
-
-**22. Несогласованные цифры в документации.** README: 41 тест (реально 68), 63 участка в Баварии (в `osm_fields.py` — 120).
-
-**23. Региональный фильтр ссылается на отсутствующие культуры.** `crop_catalog.py`: «Ячмень», «Вишня» есть в списках стран, но не в `CROP_DATABASE`; 33 из 39 культур без иконки.
-
-**24. Мусор в рабочей директории.** `backend/db_queries.log` (от старой конфигурации логирования), `backend/db.sqlite3`, `.ruff_cache` в двух местах. Всё в `.gitignore`, но сбивает с толку.
-
-**25. Нестандартные имена миграций.** `mainofbd`, `factsofplants` вместо нумерованных; первая сгенерирована Django 6.0.1, следующая 5.2.9. Работает, но затрудняет чтение истории.
-
-**26. Огромный незакоммиченный рефакторинг.** В рабочем дереве 28 изменённых файлов (+3120/−1967), 4 удалённых (`backend/README.md`, `api/auth_views.py`, `api/processing.py`, `vercel_app.py`) и 15 новых, последний коммит от 10 августа. Ссылок на удалённые модули не осталось, всё работает, но всё это может быть потеряно одной командой. Стоит закоммитить.
+`train.py` дообучает ResNet-18 на снимках почвы с земли, `predict.py`
+классифицирует один снимок, `distribute_dataset.py` раскладывает датасет
+(привязан к путям конкретной Windows-машины). `soil_model.pth` (44 МБ)
+обучен на макроснимках, к спутниковым тайлам не валидирован, в Docker-образ
+не попадает.
 
 ---
 
-## 9. Неподключённый и мёртвый код
+## 10. Проверки и CI
 
-* **Эндпоинты без UI**: `/api/dashboard/`, `/api/soil-analyses/*`, `/api/growth/` (list/detail/timeseries), `/api/invasive/*`, `/api/crops/*`, `/api/rotations/*`, `/api/weeds/database/`, `/api/capabilities/`, `/api/fields/{id}/`. Бэкенд полный, фронтенд использует только 7 маршрутов.
-* **`permissions.IsOwnerOfField`** — нигде не подключён.
-* **`osm_fields.nearest_field`** — не вызывается.
-* **`Field.get_bounds/set_bounds`** — не используются в API.
-* **`config/asgi.py`** — не используется (gunicorn запускает WSGI).
-* **`wsgi.app`** — алиас для Vercel, который больше не нужен.
-* **`api/management/commands/`** — пустой пакет.
-* **ResNet-18 в `fertility._classify_with_model`** — за флагом `ENABLE_SOIL_MODEL_ON_TILES`, torch не в основных зависимостях, весов в Docker-образе нет.
-* **`ai model/distribute_dataset.py`** — привязан к путям на конкретной Windows-машине.
-* **`frontend/script.js`**: `setAnalysisType` ищет кнопки `#tab-*`, которых нет; `L.Draw.Event.CREATED` не срабатывает из-за `draw: false`.
-* **`db_queries.log`** — никакая текущая конфигурация в него не пишет.
+Локально:
+
+```bash
+ruff check .                                   # линт
+cd backend && python manage.py test            # 90 тестов, in-memory SQLite
+cd frontend && npm run build && npm test       # сборка + 37 jsdom-проверок
+```
+
+Что покрывают тесты бэкенда: health-check без БД; аутентификация устройства и
+лимит регистраций; изоляция данных между устройствами, включая запись в чужое
+поле; read-only справочники; валидация bbox и бюджет тайлов; выводные формулы
+почвы и `soil_quality_score`; подбор культур; дашборд; размер ответов;
+честность ответов анализа (`method`, 502 при отказе сервиса); троттлинг;
+профили индексов; фолбэки Sentinel и плодородия; офсет отражения; маска
+облаков; сезонная продуктивность; WorldCover; здания и поля из OSM.
+
+`.github/workflows/ci.yml`, два job'а на push в `main` и pull request:
+
+* `backend`: Python 3.12, зависимости + ruff, `ruff check .`,
+  `makemigrations --check`, `manage.py test`, проверка, что
+  `DJANGO_DEBUG=False manage.py check` падает без секрета.
+* `frontend`: Node 20, `npm ci`, `npm run build`, `npm test`, проверка, что в
+  `dist/assets` есть JS-бандл и `index.html` не ссылается на голый
+  `script.js`.
 
 ---
 
-## 10. Доработка от 13 сентября 2026: официальные источники вместо эвристик
+## 11. Известные ограничения и открытые вопросы
 
-Цель: чтобы каждое число в интерфейсе имело названный публичный источник и погрешность. Всё бесплатно и без ключей; используются два клиента, которые уже были в проекте (Planetary Computer и SoilGrids), плюс Overpass.
+Операционные:
 
-### Что изменилось по типам анализа
+* **Кеш и троттлинг в памяти процесса.** Без `REDIS_URL` два воркера
+  gunicorn считают лимиты раздельно (30/час на деле до 60/час), а кеш
+  Sentinel и SoilGrids дублируется и теряется при рестарте. На Railway
+  достаточно добавить Redis и переменную `REDIS_URL`.
+* **Лимит 20 новых устройств в час на IP** блокирует пользователей за общим
+  NAT (вуз, офис, мобильный оператор). `_client_ip` доверяет
+  `X-Forwarded-For` без списка доверенных прокси.
+* **Base64-картинки в TEXT-колонках** быстро расходуют квоту Neon. Разумнее
+  объектное хранилище или ужатие PNG.
+* **Веса модели** лежат в git как обычный 44 МБ blob при объявленном правиле
+  LFS в `.gitattributes`. Либо `git lfs migrate import --include="*.pth"`,
+  либо убрать правило.
+* **Локальный `backend/.env`** может указывать на боевую базу Neon при
+  `DEBUG=True`; для локальной работы `DATABASE_URL` лучше не задавать.
 
-| Анализ | Было | Стало | Файлы |
-|---|---|---|---|
-| Плодородие | один снимок NDVI → классы | композит: пик и среднее NDVI за 3 сезона (65 %) + оценка почвы SoilGrids (35 %); вода, застройка, снег по WorldCover; уклон по DEM. Фолбэки: одна сцена → ExG | `analysis/fertility.py`, `services/sentinel.py`, `services/soilgrids.py`, `services/worldcover.py` |
-| Зелёность | NDVI + стадия | + NDMI (влажность покрова, B08/B11), + отклонение от NDVI того же окна за 2 прошлых года с подписью | `analysis/vegetation.py`, `services/sentinel.py` |
-| Сорняки | текстурная дисперсия RGB | отклонение NDVI от медианы поля (> 2 MAD) только внутри пашни, луга и кустарника по WorldCover; направление «зеленее/бледнее»; явная `note`, что вид не определяется. Фолбэк: старая текстура | `analysis/weeds.py` |
-| Инфраструктура | Canny-контуры | класс «застройка» WorldCover + контуры зданий OSM (до 12 км², до 3000 зданий). Фолбэк: Canny | `analysis/urban.py`, `services/buildings.py` |
-| «Предсказание застройки» | морфология RGB | переименовано в «Динамика застройки»: WorldCover 2020 → 2021, изменение в п.п., новая застройка на оверлее, свободная пашня/луг у застройки. Фолбэк: старая морфология | `analysis/urban.py` |
-| Покров земли | HSV-маски | 11 классов WorldCover с официальной легендой и заявленной точностью | `analysis/urban.py`, `services/worldcover.py` |
-| Агроклимат | средние SoilGrids | + диапазоны Q5–Q95 для pH, углерода, ЁКО, глины, влагоёмкости; + ЁКО и разрешение 250 м в ответе | `services/soilgrids.py`, `analysis/environment.py` |
+Функциональные:
 
-### Новые модули
+* **Вид сорняка не определяется** по спутнику; нужен Pl@ntNet (бесплатный
+  ключ) и загрузка фото с клиента, чего в UI нет.
+* **FAO GAEZ v4** (пригодность культур, почвенные ограничения) требует
+  ручной загрузки растров; подбор культур пока по статическому каталогу.
+* **Microsoft Global Building Footprints** разумно загрузить в PostGIS при
+  деплое; сейчас здания берутся из OSM, покрытие которого неравномерно.
+* **Границы участков** есть только там, где их разметили в OpenStreetMap.
+* **Цены земли и курсы валют** на дашборде: цены зашиты в `LAND_PRICES` как
+  ориентир, курсы берутся с `exchangerate-api.com` без ключа и SLA.
+* **Внешние вызовы из браузера** (Nominatim, exchangerate-api, Open-Meteo)
+  идут без идентифицирующего User-Agent, который браузер не даёт задать.
 
-* **`services/worldcover.py`** — `fetch_landcover(bbox, year, size)` → массив классов + метаданные; `class_percentages`, `paint`, `legend`; константы классов; кеш 30 дней; `DISABLE_WORLDCOVER` для отключения.
-* **`services/buildings.py`** — `lookup_buildings(bbox)` через Overpass `way["building"]`; отказ при площади > 12 км²; кеш 7 дней.
-* **`services/sentinel.py`** — добавлены `search_scenes`, `fetch_seasonal_productivity` (лучшая сцена на месяц, апрель–сентябрь, до 3 лет, параллельная загрузка), `fetch_ndmi_mean`, `fetch_reference_ndvi`, `resolution_for` (честные м/пиксель), `_pack/_unpack` (кеш через `np.savez_compressed`: 2.6 МБ → ~0.3 МБ на запись).
-* **`services/soilgrids.py`** — `soil_quality_score(properties)` → `(0..1, factors)` по правилам: pH оптимум 6.0–7.5, SOC 20 г/кг = 1.0, ЁКО 25 = 1.0, текстура (песок ≥ 70 % → 0.4, глина ≥ 60 % → 0.6).
-
-### Замеры на реальных сервисах (bbox 3×3 км, орошаемая пашня у Чиназа)
-
-| Пайплайн | Холодный запуск | Метод в ответе |
-|---|---|---|
-| Плодородие | 48 с (18 сцен) | NDVI Sentinel-2 за 3 сезона + почва SoilGrids + покров WorldCover + уклон DEM |
-| Зелёность | 11 с | NDVI + NDMI 0.089 + отклонение +0.040 от 2024–2025 |
-| Сорняки | < 1 с (из кеша сцены) | 21 очаг, медиана NDVI поля 0.508 |
-| Инфраструктура | 2 с | WorldCover 13 % застройки + 3 здания OSM |
-| Динамика | < 1 с | застройка +1.18 п.п. 2020→2021 |
-
-Над центром Ташкента SoilGrids возвращает `null` (города замаскированы в исходных растрах), и индекс честно строится по одной продуктивности с пометкой в `components.soil.note`.
-
-### Исправленные ошибки из раздела 8
-
-1. Чекбокс `#save-result-check` добавлен в `index.html`, включён по умолчанию — результаты теперь сохраняются в выбранное поле.
-2. `OwnedFieldMixin.validate_field` в `serializers.py` для севооборота, мониторинга и отчётов — чужое поле даёт 400. Покрыто тестами `CrossTenantWriteTests`.
-3. `settings_test.py` ставит `DJANGO_DEBUG`/`DJANGO_SECRET_KEY` до импорта настроек — тесты проходят без `.env` (проверено симуляцией CI).
-6. `FieldDetectRequestSerializer` валидирует `lat`, `lon`, `radius_m` (100–5000).
-7. В `L.Control.Draw` включены прямоугольник и полигон.
-8. Кеш Sentinel хранит сжатые массивы.
-9. `metres_per_pixel` считается из размера bbox и растра.
-13. Переменная `--primary-rgb` объявлена в `style.css` и переключается в `changeTheme`.
-
-### Что не сделано и почему
-
-* **FAO GAEZ v4** (пригодность культур, почвенные ограничения) — требует ручной загрузки растров с портала GAEZ; код подбора культур пока прежний.
-* **Microsoft Global Building Footprints** — файлы по регионам весят сотни МБ, разумно загрузить их в PostGIS при деплое; сейчас здания берутся из OSM.
-* **Pl@ntNet** для определения вида по фото — нужен бесплатный ключ и загрузка фото с клиента; не входит в текущий UI.
-* Пункты 4 (локальный `.env` с продовой БД), 5 (Vercel), 10 (LFS), 11–12 (лимит устройств, Redis) — операционные, вне кода.
-
-### Проверки после доработки
-
-`ruff check .` чист, `manage.py test` — 89 тестов проходят (в том числе без `.env`), `npm run build && npm test` — 37 проверок проходят.
+Неподключённый код: `permissions.IsOwnerOfField`, `osm_fields.nearest_field`,
+`Field.get_bounds/set_bounds`, `config/asgi.py`, алиас `wsgi.app`, пустой
+`api/management/commands/`, ResNet-18 за флагом, `ai model/distribute_dataset.py`.
+Большая часть API (дашборд, история анализов, севооборот, очаги, справочники)
+реализована и покрыта тестами, но фронтенд использует только семь маршрутов.
