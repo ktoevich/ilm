@@ -18,6 +18,7 @@ from django.db.models import Count, OuterRef, Subquery, Sum
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, status
 from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -112,6 +113,21 @@ def analysis_error_response(exc):
 # ---------------------------------------------------------------------------
 # Session
 # ---------------------------------------------------------------------------
+class HealthView(APIView):
+    """Liveness probe for the hosting platform.
+
+    No auth, no throttle, no database: it answers whether the process is up,
+    nothing more, so a rate limit or a slow query can never fail a deploy.
+    """
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = []
+
+    def get(self, request):
+        return Response({'status': 'ok'})
+
+
 class SessionView(APIView):
     """Confirms the device identity the client is currently using."""
 

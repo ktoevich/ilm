@@ -37,6 +37,14 @@ def device_client(device_id=None):
     return client
 
 
+class HealthCheckTests(TestCase):
+    def test_health_needs_no_device_and_touches_no_data(self):
+        with self.assertNumQueries(0):
+            response = APIClient().get(reverse('health'))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json(), {'status': 'ok'})
+
+
 class DeviceAuthenticationTests(TestCase):
     def setUp(self):
         cache.clear()

@@ -16,6 +16,7 @@ from .views import (
     GrowthMonitoringDetailView,
     GrowthMonitoringListView,
     GrowthTimeSeriesView,
+    HealthView,
     InvasiveSpeciesDetailView,
     InvasiveSpeciesListView,
     SessionView,
@@ -28,6 +29,7 @@ from .views import (
 )
 
 urlpatterns = [
+    path('health/', HealthView.as_view(), name='health'),
     path('session/', SessionView.as_view(), name='session'),
     path('capabilities/', CapabilitiesView.as_view(), name='capabilities'),
 

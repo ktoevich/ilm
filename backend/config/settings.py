@@ -55,6 +55,14 @@ if not SECRET_KEY:
     SECRET_KEY = 'django-insecure-development-only-do-not-deploy-with-this-key'
 
 ALLOWED_HOSTS = env_list('DJANGO_ALLOWED_HOSTS')
+
+# Railway injects the service's public domain; its health probe arrives with
+# its own Host header. Adding both here means a stock Railway deploy needs no
+# DJANGO_ALLOWED_HOSTS at all -- a custom domain still goes in that variable.
+RAILWAY_PUBLIC_DOMAIN = os.environ.get('RAILWAY_PUBLIC_DOMAIN', '').strip()
+if RAILWAY_PUBLIC_DOMAIN:
+    ALLOWED_HOSTS += [RAILWAY_PUBLIC_DOMAIN, 'healthcheck.railway.app']
+
 if not ALLOWED_HOSTS:
     if DEBUG:
         ALLOWED_HOSTS = ['localhost', '127.0.0.1', '[::1]', 'testserver']
@@ -227,6 +235,9 @@ SOIL_MODEL_PATH = os.environ.get(
 if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     SECURE_SSL_REDIRECT = env_bool('DJANGO_SECURE_SSL_REDIRECT', True)
+    # Platform health probes hit the container over plain HTTP with no
+    # X-Forwarded-Proto; a 301 there counts as a failed deploy.
+    SECURE_REDIRECT_EXEMPT = [r'^api/health/$']
     SECURE_HSTS_SECONDS = int(os.environ.get('DJANGO_HSTS_SECONDS', '31536000'))
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True

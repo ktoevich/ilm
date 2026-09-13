@@ -38,9 +38,12 @@ EXPOSE 8000
 
 # Two workers with threads: the work is I/O bound on tile downloads, and each
 # analysis holds a decoded mosaic in memory, so process count stays low.
-CMD ["gunicorn", "config.wsgi:application", \
-     "--bind", "0.0.0.0:8000", \
-     "--workers", "2", \
-     "--threads", "4", \
-     "--timeout", "120", \
-     "--access-logfile", "-"]
+#
+# Shell form so $PORT expands: Railway (and most PaaS hosts) inject the port
+# the router forwards to. Plain `docker run -p 8000:8000` keeps working.
+CMD gunicorn config.wsgi:application \
+    --bind "0.0.0.0:${PORT:-8000}" \
+    --workers 2 \
+    --threads 4 \
+    --timeout 120 \
+    --access-logfile -
