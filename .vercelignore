@@ -1,0 +1,16 @@
+# Vercel hosts the static frontend only. Anything Python must not be uploaded,
+# otherwise Vercel detects backend/manage.py and tries to build a Django app.
+backend
+ai model
+venv
+.venv
+requirements.txt
+requirements-ml.txt
+pyproject.toml
+Dockerfile
+.dockerignore
+.github
+.ruff_cache
+*.pth
+*.log
+*.sqlite3
