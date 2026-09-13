@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Check for missing migrations
+        working-directory: backend
+        run: python manage.py makemigrations --check --dry-run
+        env:
+          DJANGO_DEBUG: 'True'
+
+      - name: Run tests
+        working-directory: backend
+        run: python manage.py test
+
+      - name: Verify production settings refuse unsafe defaults
+        working-directory: backend
+        run: |
+          # Must fail: no SECRET_KEY with DEBUG off.
+          if DJANGO_DEBUG=False python manage.py check 2>/dev/null; then
+            echo "::error::settings accepted a missing DJANGO_SECRET_KEY in production mode"
+            exit 1
+          fi
+          echo "OK: production settings reject a missing SECRET_KEY"
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+      - name: Smoke test the bundle in jsdom
+        working-directory: frontend
+        run: npm test
+
+      - name: Fail if the bundle is missing from the build output
+        working-directory: frontend
+        run: |
+          # Regression guard: index.html once loaded script.js with a plain
+          # <script src>, which Vite does not bundle -- production shipped a
+          # page whose only script 404'd.
+          if ! ls dist/assets/*.js >/dev/null 2>&1; then
+            echo "::error::no JavaScript bundle in dist/assets"
+            exit 1
+          fi
+          if grep -q 'src="script.js"' dist/index.html; then
+            echo "::error::dist/index.html still references the unbundled script.js"
+            exit 1
+          fi

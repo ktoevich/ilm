@@ -1,20 +1,19 @@
 {
-  "name": "olympiad",
+  "name": "favorable-soil",
   "version": "1.0.0",
-  "description": "��#\u0000 \u0000i\u0000l\u0000m\u0000\r\u0000 \u0000",
-  "main": "index.js",
+  "private": true,
+  "description": "Оценка сельскохозяйственных участков по спутниковым снимкам: плодородие, зелёность, аномалии растительности, подбор культур.",
   "scripts": {
     "build": "npm run build --prefix frontend",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "npm run dev --prefix frontend",
+    "test": "cd backend && python manage.py test"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ktoevich/ilm.git"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
+  "keywords": ["agriculture", "remote-sensing", "django", "leaflet", "soil"],
+  "license": "MIT",
   "bugs": {
     "url": "https://github.com/ktoevich/ilm/issues"
   },

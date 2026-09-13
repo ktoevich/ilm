@@ -1,17 +1,23 @@
-# Set the default behavior, in case people don't have core.autocrlf set.
+# Default: normalise line endings.
 * text=auto
 
-# Explicitly declare text files to always be LF on checkout.
+# Source files always check out with LF.
 *.py text eol=lf
 *.js text eol=lf
 *.html text eol=lf
 *.css text eol=lf
 *.json text eol=lf
 *.md text eol=lf
+*.yml text eol=lf
+*.sh text eol=lf
 
-# Denote all files that are truly binary and should not be modified.
+# Binary assets: never modified, never diffed.
 *.png binary
 *.jpg binary
 *.jpeg binary
 *.gif binary
 *.ico binary
+
+# Model weights are ~45 MB. Without LFS every clone downloads them and the
+# history keeps a full copy of each revision.
+*.pth filter=lfs diff=lfs merge=lfs -text

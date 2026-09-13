@@ -2,6 +2,7 @@
 
 :root {
     --primary: #646cff;
+    --primary-rgb: 100, 108, 255;
     --primary-light: #8b8fff;
     --bg-dark: #0a0a0f;
     --bg-darker: #050508;

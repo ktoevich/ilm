@@ -1,374 +1,618 @@
+"""API endpoints.
+
+Two rules hold everywhere in this module:
+
+1. Every queryset is scoped to ``request.user``. There is no anonymous
+   fallback -- the previous ``return Field.objects.all()`` for unauthenticated
+   callers meant any visitor could read, edit and delete anyone's records.
+2. Any object referenced by id in a request body (``field_id``) is resolved
+   through the owner-scoped queryset, so an id belonging to somebody else is a
+   404, not a silent cross-tenant write.
+"""
+
 import json
+import logging
+from datetime import date
+
+from django.db.models import Count, OuterRef, Subquery, Sum
 from django.shortcuts import get_object_or_404
-from rest_framework.views import APIView
+from rest_framework import generics, status
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.response import Response
-from rest_framework import status, generics
+from rest_framework.views import APIView
+
+from .analysis import fertility, urban, vegetation, weeds
+from .analysis.environment import analyze_environment
+from .analysis.imagery import AnalysisError
 from .models import (
-    Field, CropType, CropRotation, SoilAnalysis, 
-    InvasiveSpeciesReport, GrowthMonitoring, WeedDatabase
+    CropRotation,
+    CropType,
+    Field,
+    GrowthMonitoring,
+    InvasiveSpeciesReport,
+    SoilAnalysis,
+    WeedDatabase,
 )
+from .permissions import IsOwner
 from .serializers import (
-    FieldSerializer, CropTypeSerializer, CropRotationSerializer, 
-    SoilAnalysisSerializer, InvasiveSpeciesReportSerializer, 
-    GrowthMonitoringSerializer, WeedDatabaseSerializer
+    AnalyzeRequestSerializer,
+    CropRotationSerializer,
+    CropTypeBriefSerializer,
+    CropTypeSerializer,
+    FieldDetectRequestSerializer,
+    FieldSerializer,
+    GrowthMonitoringDetailSerializer,
+    GrowthMonitoringListSerializer,
+    InvasiveSpeciesReportDetailSerializer,
+    InvasiveSpeciesReportSerializer,
+    PlantingRecommendationRequestSerializer,
+    SoilAnalysisDetailSerializer,
+    SoilAnalysisListSerializer,
+    UrbanAnalyzeRequestSerializer,
+    WeedDatabaseSerializer,
 )
-from .processing import (
-    generate_mock_overlay, analyze_ndvi, detect_weeds, 
-    analyze_environment_with_crops, detect_buildings, predict_development, filter_urban_areas
-)
+from .services import buildings, osm_fields, sentinel, worldcover
+from .validators import BBoxError, parse_bbox
 
-class AnalyzeView(APIView):
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Base classes
+# ---------------------------------------------------------------------------
+class OwnedQuerysetMixin:
+    """Restrict every queryset to the requesting user."""
+
+    model = None
+    throttle_scope = 'crud'
+
+    def get_queryset(self):
+        return self.model.objects.filter(user=self.request.user)
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+
+class AnalysisView(APIView):
+    """Shared plumbing for the bbox-driven analysis endpoints."""
+
+    throttle_scope = 'analysis'
+    request_serializer = AnalyzeRequestSerializer
+
+    def parse_request(self, request):
+        """Validate the payload, returning ``(bbox, field, save_result, data)``.
+
+        Raises DRF validation errors for bad input; the bbox check in
+        particular is what stops a request asking for the whole planet.
+        """
+        serializer = self.request_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            bbox = parse_bbox(data.get('bbox'))
+        except BBoxError as exc:
+            raise DRFValidationError({'bbox': str(exc)}) from exc
+
+        field = None
+        field_id = data.get('field_id')
+        if field_id:
+            # Owner-scoped: another user's field id is indistinguishable from a
+            # non-existent one.
+            field = get_object_or_404(Field, id=field_id, user=request.user)
+
+        return bbox, field, bool(data.get('save_result')), data
+
+
+def analysis_error_response(exc):
+    logger.info('Analysis could not be completed: %s', exc)
+    return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+
+# ---------------------------------------------------------------------------
+# Session
+# ---------------------------------------------------------------------------
+class SessionView(APIView):
+    """Confirms the device identity the client is currently using."""
+
+    throttle_scope = 'crud'
+
+    def get(self, request):
+        return Response({
+            'authenticated': True,
+            'user_id': request.user.id,
+            'fields_count': Field.objects.filter(user=request.user).count(),
+            'capabilities': {
+                'sentinel2_ndvi': sentinel.is_available(),
+                'field_detection': osm_fields.is_available(),
+            },
+        })
+
+
+# ---------------------------------------------------------------------------
+# Fertility
+# ---------------------------------------------------------------------------
+class AnalyzeView(AnalysisView):
     def post(self, request):
-        bbox = request.data.get('bbox')
-        field_id = request.data.get('field_id')
-        save_result = request.data.get('save_result', False)
-        if not bbox:
-            return Response({"error": "BBOX required"}, status=status.HTTP_400_BAD_REQUEST)
+        bbox, field, save_result, _ = self.parse_request(request)
 
-        overlay_image, actual_bounds, stats = generate_mock_overlay(bbox)
+        try:
+            result = fertility.analyze_fertility(bbox)
+            environment = analyze_environment(bbox)
+        except AnalysisError as exc:
+            return analysis_error_response(exc)
 
-        if not overlay_image:
-            return Response({"error": "Failed to process image"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        stats = result['stats']
 
-        env_data = analyze_environment_with_crops(bbox)
-
-        if save_result and field_id:
-            field = get_object_or_404(Field, id=field_id)
-            user = request.user if request.user.is_authenticated else None
-            analysis = SoilAnalysis.objects.create(
-                user=user,
+        if save_result and field is not None:
+            analysis = SoilAnalysis(
+                user=request.user,
                 field=field,
-                bbox_json=json.dumps(bbox),
-                very_high_percent=stats.get('very_high', 0),
-                high_percent=stats.get('high', 0),
-                moderate_percent=stats.get('moderate', 0),
-                low_percent=stats.get('low', 0),
-                non_fertile_percent=stats.get('desert', 0) + stats.get('water', 0),
-                overlay_image=overlay_image,
-                notes=f"Method: {stats.get('analysis_method', 'Unknown')}"
+                bbox_json=json.dumps(list(bbox)),
+                very_high_percent=stats['very_high'],
+                high_percent=stats['high'],
+                moderate_percent=stats['moderate'],
+                low_percent=stats['low'],
+                non_fertile_percent=stats['desert'] + stats['water'] + stats.get('built_up', 0.0),
+                overlay_image=result['overlay'],
+                notes=f"Метод: {result['method']}",
             )
             analysis.calculate_fertility_index()
-
-        legend = {
-            "Очень высокое плодородие": "rgba(0, 100, 0, 0.7)",
-            "Высокое плодородие": "rgba(0, 200, 0, 0.7)",
-            "Умеренное плодородие": "rgba(0, 255, 255, 0.7)",
-            "Низкое плодородие": "rgba(0, 165, 255, 0.7)",
-            "Горы / Скалистый рельеф": "rgba(100, 70, 50, 0.7)",
-            "Засушливая земля / Пустыня": "rgba(150, 150, 150, 0.7)",
-            "Вода / Тень": "rgba(0, 0, 255, 0.7)"
-        }
+            analysis.save()
 
         return Response({
-            "overlay": {
-                "image": overlay_image,
-                "bounds": actual_bounds
-            },
-            "stats": stats,
-            "legend": legend,
-            "environment": env_data
+            'overlay': {'image': result['overlay'], 'bounds': result['bounds']},
+            'stats': stats,
+            'legend': result['legend'],
+            'method': result['method'],
+            'imagery': result['imagery'],
+            'components': result.get('components', {}),
+            'environment': environment,
         })
 
-class FieldListCreateView(generics.ListCreateAPIView):
+
+# ---------------------------------------------------------------------------
+# Fields
+# ---------------------------------------------------------------------------
+class FieldListCreateView(OwnedQuerysetMixin, generics.ListCreateAPIView):
+    model = Field
     serializer_class = FieldSerializer
 
     def get_queryset(self):
-        if self.request.user.is_authenticated:
-            return Field.objects.filter(user=self.request.user)
-        return Field.objects.all()
-
-    def perform_create(self, serializer):
-        if self.request.user.is_authenticated:
-            serializer.save(user=self.request.user)
-        else:
-            serializer.save()
-
-class FieldDetailView(generics.RetrieveUpdateDestroyAPIView):
-    serializer_class = FieldSerializer
-
-    def get_queryset(self):
-        if self.request.user.is_authenticated:
-            return Field.objects.filter(user=self.request.user)
-        return Field.objects.all()
-
-class CropTypeListView(generics.ListCreateAPIView):
-    queryset = CropType.objects.all()
-    serializer_class = CropTypeSerializer
-
-class CropTypeDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = CropType.objects.all()
-    serializer_class = CropTypeSerializer
-
-class CropRotationListView(generics.ListCreateAPIView):
-    serializer_class = CropRotationSerializer
-
-    def get_queryset(self):
-        qs = CropRotation.objects.all()
-        if self.request.user.is_authenticated:
-            qs = qs.filter(user=self.request.user)
-        field_id = self.request.query_params.get('field_id')
-        if field_id:
-            qs = qs.filter(field_id=field_id)
-        return qs
-
-    def perform_create(self, serializer):
-        if self.request.user.is_authenticated:
-            serializer.save(user=self.request.user)
-        else:
-            serializer.save()
-
-class CropRotationRecommendationView(APIView):
-    def get(self, request, field_id):
-        field = get_object_or_404(Field, id=field_id)
-        last_rotation = CropRotation.objects.filter(field=field).order_by('-year').first()
-        
-        recommendations = []
-        if last_rotation:
-            prev_crop = last_rotation.crop_type
-            good_next = prev_crop.good_successors.all()
-            for crop in good_next:
-                recommendations.append({
-                    "crop": CropTypeSerializer(crop).data,
-                    "reason": f"Хороший последователь для {prev_crop.name}"
-                })
-        
-        if not recommendations:
-            crops = CropType.objects.all()[:3]
-            for crop in crops:
-                recommendations.append({
-                    "crop": CropTypeSerializer(crop).data,
-                    "reason": "Базовая рекомендация"
-                })
-                
-        return Response(recommendations)
-
-class CropPlantingRecommendationView(APIView):
-    def post(self, request):
-        field_id = request.data.get('field_id')
-        ph = request.data.get('ph')
-        n = request.data.get('nitrogen')
-        p = request.data.get('phosphorus')
-        k = request.data.get('potassium')
-        moisture = request.data.get('moisture')
-        
-        if not all([ph, n, p, k, moisture]):
-            return Response({"error": "All soil parameters are required"}, status=400)
-            
-        crops = CropType.objects.all()
-        results = []
-        
-        for crop in crops:
-            comp = crop.check_soil_compatibility(ph, n, p, k, moisture)
-            results.append({
-                "crop": CropTypeSerializer(crop).data,
-                "compatibility": comp
-            })
-            
-        results.sort(key=lambda x: x['compatibility']['compatibility_percent'], reverse=True)
-        return Response(results)
-
-class SoilAnalysisListView(generics.ListAPIView):
-    serializer_class = SoilAnalysisSerializer
-    
-    def get_queryset(self):
-        qs = SoilAnalysis.objects.all()
-        if self.request.user.is_authenticated:
-            qs = qs.filter(user=self.request.user)
-        field_id = self.request.query_params.get('field_id')
-        if field_id:
-            qs = qs.filter(field_id=field_id)
-        return qs
-
-class SoilAnalysisTimeSeriesView(APIView):
-    def get(self, request, field_id):
-        analyses = SoilAnalysis.objects.filter(field_id=field_id).order_by('analysis_date')
-        data = {
-            "dates": [a.analysis_date.strftime('%Y-%m-%d') for a in analyses],
-            "fertility_index": [a.fertility_index for a in analyses],
-            "very_high": [a.very_high_percent for a in analyses],
-            "high": [a.high_percent for a in analyses],
-            "moderate": [a.moderate_percent for a in analyses],
-            "low": [a.low_percent for a in analyses]
-        }
-        return Response(data)
-
-class GrowthMonitoringListView(generics.ListCreateAPIView):
-    serializer_class = GrowthMonitoringSerializer
-
-    def get_queryset(self):
-        if self.request.user.is_authenticated:
-            return GrowthMonitoring.objects.filter(user=self.request.user)
-        return GrowthMonitoring.objects.all()
-
-    def perform_create(self, serializer):
-        if self.request.user.is_authenticated:
-            serializer.save(user=self.request.user)
-        else:
-            serializer.save()
-
-class GrowthAnalyzeView(APIView):
-    def post(self, request):
-        bbox = request.data.get('bbox')
-        field_id = request.data.get('field_id')
-        save_result = request.data.get('save_result', False)
-        
-        if not bbox:
-            return Response({"error": "BBOX required"}, status=400)
-            
-        data = analyze_ndvi(bbox)
-        if not data:
-            return Response({"error": "Failed to analyze Growth"}, status=500)
-            
-        if save_result and field_id:
-            field = get_object_or_404(Field, id=field_id)
-            from datetime import date
-            user = request.user if request.user.is_authenticated else None
-            GrowthMonitoring.objects.update_or_create(
-                field=field,
-                observation_date=date.today(),
-                defaults={
-                    "user": user,
-                    "ndvi_mean": data["ndvi_mean"],
-                    "ndvi_min": data["ndvi_min"],
-                    "ndvi_max": data["ndvi_max"],
-                    "health_score": data["health_score"],
-                    "growth_stage": data["growth_stage"],
-                    "ndvi_overlay": data["overlay"]
-                }
+        latest_index = (
+            SoilAnalysis.objects
+            .filter(field=OuterRef('pk'))
+            .order_by('-analysis_date')
+            .values('fertility_index')[:1]
+        )
+        # Annotating removes the two extra queries the serializer used to run
+        # per field.
+        return (
+            Field.objects
+            .filter(user=self.request.user)
+            .annotate(
+                analyses_count_annotated=Count('analyses', distinct=True),
+                latest_fertility_index_annotated=Subquery(latest_index),
             )
-            
+            # annotate() adds a GROUP BY, which drops Meta.ordering; pagination
+            # needs a deterministic order.
+            .order_by('-created_at', '-id')
+        )
+
+
+class FieldDetailView(OwnedQuerysetMixin, generics.RetrieveUpdateDestroyAPIView):
+    model = Field
+    serializer_class = FieldSerializer
+    permission_classes = generics.RetrieveUpdateDestroyAPIView.permission_classes + [IsOwner]
+
+
+class FieldDetectView(APIView):
+    """Field boundaries at a point, so the user need not draw one.
+
+    Backed by OpenStreetMap through Overpass -- free and keyless. It returns
+    what has been *mapped*, so coverage varies: dense across Europe, absent in
+    places. An unmapped location answers 404 rather than a guessed rectangle.
+    """
+
+    throttle_scope = 'analysis'
+
+    def post(self, request):
+        serializer = FieldDetectRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        params = serializer.validated_data
+
+        radius = params.get('radius_m') or osm_fields.DEFAULT_RADIUS_M
+        features = osm_fields.lookup_fields(params['lat'], params['lon'], radius)
+
+        if not features:
+            return Response(
+                {'error': 'В OpenStreetMap нет размеченных участков рядом с этой точкой'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
         return Response({
-            "ndvi": {
-                "ndvi_mean": data["ndvi_mean"],
-                "ndvi_min": data["ndvi_min"],
-                "ndvi_max": data["ndvi_max"],
-                "health_score": data["health_score"],
-                "growth_stage": data["growth_stage"]
-            },
-            "overlay": {
-                "image": data["overlay"],
-                "bounds": data["bounds"]
-            }
+            'features': features[:50],
+            'source': 'OpenStreetMap',
         })
 
-class GrowthTimeSeriesView(APIView):
-    def get(self, request, field_id):
-        records = GrowthMonitoring.objects.filter(field_id=field_id).order_by('observation_date')
-        data = {
-            "dates": [r.observation_date.strftime('%Y-%m-%d') for r in records],
-            "ndvi_mean": [r.ndvi_mean for r in records],
-            "health_score": [r.health_score for r in records]
-        }
-        return Response(data)
 
-class InvasiveSpeciesListView(generics.ListCreateAPIView):
-    serializer_class = InvasiveSpeciesReportSerializer
+class CapabilitiesView(APIView):
+    """Which data sources are configured, so the UI can adapt."""
 
-    def get_queryset(self):
-        if self.request.user.is_authenticated:
-            return InvasiveSpeciesReport.objects.filter(user=self.request.user)
-        return InvasiveSpeciesReport.objects.all()
+    throttle_scope = 'crud'
 
-    def perform_create(self, serializer):
-        if self.request.user.is_authenticated:
-            serializer.save(user=self.request.user)
-        else:
-            serializer.save()
+    def get(self, request):
+        return Response({
+            'sentinel2_ndvi': sentinel.is_available(),
+            'field_detection': osm_fields.is_available(),
+            'land_cover': worldcover.is_available(),
+            'buildings': buildings.is_available(),
+            'sources': {
+                'imagery': 'Sentinel-2 L2A (Microsoft Planetary Computer)',
+                'productivity': 'Sentinel-2 NDVI за несколько сезонов (Microsoft Planetary Computer)',
+                'land_cover': 'ESA WorldCover 2020/2021 (Microsoft Planetary Computer)',
+                'buildings': 'OpenStreetMap',
+                'field_boundaries': 'OpenStreetMap',
+                'soil': 'ISRIC SoilGrids v2.0 с квантилями неопределённости',
+                'weather': 'Open-Meteo',
+                'elevation': 'Copernicus GLO-90',
+            },
+        })
 
-class InvasiveSpeciesDetailView(generics.RetrieveUpdateDestroyAPIView):
-    serializer_class = InvasiveSpeciesReportSerializer
 
-    def get_queryset(self):
-        if self.request.user.is_authenticated:
-            return InvasiveSpeciesReport.objects.filter(user=self.request.user)
-        return InvasiveSpeciesReport.objects.all()
+# ---------------------------------------------------------------------------
+# Crop catalogue (read-only over the API; edited through the admin)
+# ---------------------------------------------------------------------------
+class CropTypeListView(generics.ListAPIView):
+    """Shared reference data.
 
-class WeedDetectionView(APIView):
-    def post(self, request):
-        bbox = request.data.get('bbox')
-        field_id = request.data.get('field_id')
-        save_result = request.data.get('save_result', False)
-        if not bbox:
-            return Response({"error": "BBOX required"}, status=400)
-            
-        data = detect_weeds(bbox)
-        if not data:
-            return Response({"error": "Failed to detect weeds"}, status=500)
-            
-        if save_result and field_id:
-            field = get_object_or_404(Field, id=field_id)
-            user = request.user if request.user.is_authenticated else None
-            for d in data.get('detections', []):
-                InvasiveSpeciesReport.objects.create(
-                    user=user,
-                    field=field,
-                    species_name=d['name'],
-                    severity=d['severity'],
-                    location_lat=d['lat'],
-                    location_lon=d['lon'],
-                    affected_area=d['area'],
-                    recommendations=d['recommendations']
-                )
-                
-        return Response(data)
+    Read-only on purpose: this table is global, so an open write endpoint let
+    any visitor rewrite the agronomic thresholds every recommendation uses.
+    """
+
+    throttle_scope = 'crud'
+    serializer_class = CropTypeSerializer
+    queryset = CropType.objects.prefetch_related('good_predecessors', 'bad_predecessors')
+
+
+class CropTypeDetailView(generics.RetrieveAPIView):
+    throttle_scope = 'crud'
+    serializer_class = CropTypeSerializer
+    queryset = CropType.objects.prefetch_related('good_predecessors', 'bad_predecessors')
+
 
 class WeedDatabaseListView(generics.ListAPIView):
+    throttle_scope = 'crud'
     queryset = WeedDatabase.objects.all()
     serializer_class = WeedDatabaseSerializer
 
 
-class DashboardView(APIView):
-    def get(self, request):
-        total_fields = Field.objects.count()
-        total_area = sum(f.area_hectares for f in Field.objects.all())
-        latest_analyses = SoilAnalysis.objects.all()[:5]
-        latest_reports = InvasiveSpeciesReport.objects.filter(status='detected')[:5]
-        
+# ---------------------------------------------------------------------------
+# Crop rotation
+# ---------------------------------------------------------------------------
+class CropRotationListView(OwnedQuerysetMixin, generics.ListCreateAPIView):
+    model = CropRotation
+    serializer_class = CropRotationSerializer
+
+    def get_queryset(self):
+        queryset = (
+            CropRotation.objects
+            .filter(user=self.request.user)
+            .select_related('field', 'crop_type')
+        )
+        field_id = self.request.query_params.get('field_id')
+        if field_id:
+            queryset = queryset.filter(field_id=field_id)
+        return queryset
+
+    def perform_create(self, serializer):
+        # The field must belong to the caller, otherwise rotations could be
+        # attached to someone else's plot.
+        field = serializer.validated_data['field']
+        if field.user_id != self.request.user.id:
+            raise DRFValidationError({'field': 'Этот участок принадлежит другому пользователю.'})
+        serializer.save(user=self.request.user)
+
+
+class CropRotationRecommendationView(APIView):
+    throttle_scope = 'crud'
+
+    def get(self, request, field_id):
+        field = get_object_or_404(Field, id=field_id, user=request.user)
+        last_rotation = (
+            CropRotation.objects
+            .filter(field=field, user=request.user)
+            .select_related('crop_type')
+            .order_by('-year')
+            .first()
+        )
+
+        recommendations = []
+        if last_rotation:
+            previous = last_rotation.crop_type
+            for crop in previous.good_successors.all():
+                recommendations.append({
+                    'crop': CropTypeBriefSerializer(crop).data,
+                    'reason': f'Хороший последователь для «{previous.name}»',
+                })
+
+        if not recommendations:
+            recommendations = [
+                {'crop': CropTypeBriefSerializer(crop).data, 'reason': 'Базовая рекомендация'}
+                for crop in CropType.objects.all()[:3]
+            ]
+
         return Response({
-            "stats": {
-                "fields_count": total_fields,
-                "total_area_ha": round(total_area, 2),
-                "active_reports": latest_reports.count()
-            },
-            "recent_analyses": SoilAnalysisSerializer(latest_analyses, many=True).data,
-            "active_threats": InvasiveSpeciesReportSerializer(latest_reports, many=True).data
+            'field': field.name,
+            'previous_crop': last_rotation.crop_type.name if last_rotation else None,
+            'recommendations': recommendations,
         })
 
-class UrbanAnalyzeView(APIView):
+
+class CropPlantingRecommendationView(APIView):
+    throttle_scope = 'crud'
+
     def post(self, request):
-        bbox = request.data.get('bbox')
-        analysis_type = request.data.get('analysis_type', 'infrastructure')
-        
-        if not bbox:
-            return Response({"error": "BBOX required"}, status=400)
-            
-        if analysis_type == 'infrastructure':
-            data = detect_buildings(bbox)
-        elif analysis_type == 'prediction':
-            data = predict_development(bbox)
-        elif analysis_type == 'urban_filter':
-            data = filter_urban_areas(bbox)
-            return Response({
-                "data": data,
-                "overlay": {
-                    "image": data["overlay"],
-                    "bounds": data["bounds"]
-                },
-                "legend": {
-                    "Городская застройка": "rgba(80, 70, 70, 0.8)",
-                    "Природный ландшафт": "rgba(0, 0, 0, 0)"
-                }
+        serializer = PlantingRecommendationRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        params = serializer.validated_data
+
+        results = []
+        for crop in CropType.objects.all():
+            compatibility = crop.check_soil_compatibility(
+                params['ph'], params['nitrogen'], params['phosphorus'],
+                params['potassium'], params['moisture'],
+            )
+            results.append({
+                'crop': CropTypeBriefSerializer(crop).data,
+                'compatibility': compatibility,
             })
-        else:
-            return Response({"error": "Invalid analysis type"}, status=400)
-            
-        if not data:
-            return Response({"error": "Analysis failed"}, status=500)
-            
+
+        results.sort(key=lambda item: item['compatibility']['compatibility_percent'], reverse=True)
+        return Response(results)
+
+
+# ---------------------------------------------------------------------------
+# Soil analyses
+# ---------------------------------------------------------------------------
+class SoilAnalysisListView(OwnedQuerysetMixin, generics.ListAPIView):
+    model = SoilAnalysis
+    serializer_class = SoilAnalysisListSerializer
+
+    def get_queryset(self):
+        queryset = SoilAnalysis.objects.filter(user=self.request.user).select_related('field')
+        field_id = self.request.query_params.get('field_id')
+        if field_id:
+            queryset = queryset.filter(field_id=field_id)
+        return queryset
+
+
+class SoilAnalysisDetailView(OwnedQuerysetMixin, generics.RetrieveDestroyAPIView):
+    """Single analysis, including the overlay image."""
+
+    model = SoilAnalysis
+    serializer_class = SoilAnalysisDetailSerializer
+    permission_classes = generics.RetrieveDestroyAPIView.permission_classes + [IsOwner]
+
+
+class SoilAnalysisTimeSeriesView(APIView):
+    throttle_scope = 'crud'
+
+    def get(self, request, field_id):
+        field = get_object_or_404(Field, id=field_id, user=request.user)
+        analyses = (
+            SoilAnalysis.objects
+            .filter(field=field, user=request.user)
+            .order_by('analysis_date')
+            .values('analysis_date', 'fertility_index', 'very_high_percent',
+                    'high_percent', 'moderate_percent', 'low_percent')
+        )
+
         return Response({
-            "data": data,
-            "overlay": {
-                "image": data["overlay"],
-                "bounds": data["bounds"]
-            }
+            'dates': [item['analysis_date'].strftime('%Y-%m-%d') for item in analyses],
+            'fertility_index': [item['fertility_index'] for item in analyses],
+            'very_high': [item['very_high_percent'] for item in analyses],
+            'high': [item['high_percent'] for item in analyses],
+            'moderate': [item['moderate_percent'] for item in analyses],
+            'low': [item['low_percent'] for item in analyses],
+        })
+
+
+# ---------------------------------------------------------------------------
+# Growth monitoring
+# ---------------------------------------------------------------------------
+class GrowthMonitoringListView(OwnedQuerysetMixin, generics.ListCreateAPIView):
+    model = GrowthMonitoring
+    serializer_class = GrowthMonitoringListSerializer
+
+    def get_queryset(self):
+        return GrowthMonitoring.objects.filter(user=self.request.user).select_related('field')
+
+
+class GrowthMonitoringDetailView(OwnedQuerysetMixin, generics.RetrieveDestroyAPIView):
+    model = GrowthMonitoring
+    serializer_class = GrowthMonitoringDetailSerializer
+    permission_classes = generics.RetrieveDestroyAPIView.permission_classes + [IsOwner]
+
+
+class GrowthAnalyzeView(AnalysisView):
+    def post(self, request):
+        bbox, field, save_result, _ = self.parse_request(request)
+
+        try:
+            result = vegetation.analyze_vegetation(bbox)
+        except AnalysisError as exc:
+            return analysis_error_response(exc)
+
+        if save_result and field is not None:
+            GrowthMonitoring.objects.update_or_create(
+                field=field,
+                observation_date=date.today(),
+                defaults={
+                    'user': request.user,
+                    # The columns are named after NDVI. ``data_source`` records
+                    # whether the value is real NDVI (Sentinel-2) or ExG from
+                    # the RGB basemap; the serializer reports ``index_type``
+                    # from it so the two scales are never mixed.
+                    'ndvi_mean': result['index_mean'],
+                    'ndvi_min': result['index_min'],
+                    'ndvi_max': result['index_max'],
+                    'moisture_index': result.get('moisture_index'),
+                    'health_score': result['health_score'],
+                    'growth_stage': result['growth_stage'],
+                    'ndvi_overlay': result['overlay'],
+                    'data_source': 'sentinel2' if result['index_type'] == 'NDVI' else 'local_analysis',
+                },
+            )
+
+        return Response({
+            'vegetation': {
+                'index_type': result['index_type'],
+                'index_label': result['index_label'],
+                'index_mean': result['index_mean'],
+                'index_min': result['index_min'],
+                'index_max': result['index_max'],
+                'health_score': result['health_score'],
+                'growth_stage': result['growth_stage'],
+                'moisture_index': result.get('moisture_index'),
+                'moisture_label': result.get('moisture_label'),
+                'reference_ndvi': result.get('reference_ndvi'),
+                'reference_years': result.get('reference_years', []),
+                'ndvi_anomaly': result.get('ndvi_anomaly'),
+                'anomaly_label': result.get('anomaly_label'),
+            },
+            'overlay': {'image': result['overlay'], 'bounds': result['bounds']},
+            'method': result['method'],
+            'imagery': result['imagery'],
+        })
+
+
+class GrowthTimeSeriesView(APIView):
+    throttle_scope = 'crud'
+
+    def get(self, request, field_id):
+        field = get_object_or_404(Field, id=field_id, user=request.user)
+        records = list(
+            GrowthMonitoring.objects
+            .filter(field=field, user=request.user)
+            .order_by('observation_date')
+        )
+
+        return Response({
+            'index_type': 'ExG',
+            'dates': [record.observation_date.strftime('%Y-%m-%d') for record in records],
+            'index_mean': [record.ndvi_mean for record in records],
+            'health_score': [record.health_score for record in records],
+            'summary': vegetation.summarise_history(records),
+        })
+
+
+# ---------------------------------------------------------------------------
+# Invasive species / weeds
+# ---------------------------------------------------------------------------
+class InvasiveSpeciesListView(OwnedQuerysetMixin, generics.ListCreateAPIView):
+    model = InvasiveSpeciesReport
+    serializer_class = InvasiveSpeciesReportSerializer
+
+    def get_queryset(self):
+        return InvasiveSpeciesReport.objects.filter(user=self.request.user).select_related('field')
+
+
+class InvasiveSpeciesDetailView(OwnedQuerysetMixin, generics.RetrieveUpdateDestroyAPIView):
+    model = InvasiveSpeciesReport
+    serializer_class = InvasiveSpeciesReportDetailSerializer
+    permission_classes = generics.RetrieveUpdateDestroyAPIView.permission_classes + [IsOwner]
+
+
+class WeedDetectionView(AnalysisView):
+    def post(self, request):
+        bbox, field, save_result, _ = self.parse_request(request)
+
+        try:
+            result = weeds.detect_weeds(bbox)
+        except AnalysisError as exc:
+            return analysis_error_response(exc)
+
+        if save_result and field is not None:
+            InvasiveSpeciesReport.objects.bulk_create([
+                InvasiveSpeciesReport(
+                    user=request.user,
+                    field=field,
+                    species_name=detection['name'],
+                    severity=detection['severity'],
+                    location_lat=detection['lat'],
+                    location_lon=detection['lon'],
+                    affected_area=detection['area'],
+                    recommendations=detection['recommendations'],
+                )
+                # One row per contour used to mean hundreds of inserts for a
+                # busy scene; cap it at the patches that actually matter.
+                for detection in result['detections'][:50]
+            ])
+
+        return Response(result)
+
+
+# ---------------------------------------------------------------------------
+# Urban
+# ---------------------------------------------------------------------------
+class UrbanAnalyzeView(AnalysisView):
+    request_serializer = UrbanAnalyzeRequestSerializer
+
+    _PIPELINES = {
+        'infrastructure': urban.detect_buildings,
+        'prediction': urban.predict_development,
+        'urban_filter': urban.filter_urban_areas,
+    }
+
+    def post(self, request):
+        bbox, _field, _save, data = self.parse_request(request)
+        pipeline = self._PIPELINES[data['analysis_type']]
+
+        try:
+            result = pipeline(bbox)
+        except AnalysisError as exc:
+            return analysis_error_response(exc)
+
+        response = {
+            'data': result,
+            'overlay': {'image': result['overlay'], 'bounds': result['bounds']},
+            'method': result['method'],
+        }
+        if 'legend' in result:
+            response['legend'] = result['legend']
+        return Response(response)
+
+
+# ---------------------------------------------------------------------------
+# Dashboard
+# ---------------------------------------------------------------------------
+class DashboardView(APIView):
+    throttle_scope = 'crud'
+
+    def get(self, request):
+        user = request.user
+
+        # Aggregate in the database instead of loading every row into memory.
+        totals = Field.objects.filter(user=user).aggregate(
+            fields_count=Count('id'),
+            total_area=Sum('area_hectares'),
+        )
+
+        active_reports = InvasiveSpeciesReport.objects.filter(user=user, status='detected')
+        latest_analyses = (
+            SoilAnalysis.objects.filter(user=user).select_related('field')[:5]
+        )
+
+        return Response({
+            'stats': {
+                'fields_count': totals['fields_count'] or 0,
+                'total_area_ha': round(totals['total_area'] or 0.0, 2),
+                # count() on the full queryset -- slicing first capped this at 5.
+                'active_reports': active_reports.count(),
+            },
+            'recent_analyses': SoilAnalysisListSerializer(latest_analyses, many=True).data,
+            'active_threats': InvasiveSpeciesReportSerializer(
+                active_reports.select_related('field')[:5], many=True
+            ).data,
         })

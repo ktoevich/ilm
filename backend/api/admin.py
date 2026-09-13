@@ -1,8 +1,15 @@
 from django.contrib import admin
+
 from .models import (
-    Field, CropType, CropRotation, SoilAnalysis,
-    InvasiveSpeciesReport, GrowthMonitoring, WeedDatabase
+    CropRotation,
+    CropType,
+    Field,
+    GrowthMonitoring,
+    InvasiveSpeciesReport,
+    SoilAnalysis,
+    WeedDatabase,
 )
+
 
 @admin.register(Field)
 class FieldAdmin(admin.ModelAdmin):
@@ -44,7 +51,7 @@ class SoilAnalysisAdmin(admin.ModelAdmin):
     search_fields = ['field__name', 'user__email']
     readonly_fields = ['created_at', 'fertility_index']
     date_hierarchy = 'analysis_date'
-    
+
     fieldsets = (
         ('Основная информация', {
             'fields': ('user', 'field', 'analysis_date', 'bbox_json')
@@ -66,7 +73,7 @@ class InvasiveSpeciesReportAdmin(admin.ModelAdmin):
     readonly_fields = ['created_at', 'detected_at']
     date_hierarchy = 'detected_at'
     list_editable = ['status']
-    
+
     fieldsets = (
         ('Обнаружение', {
             'fields': ('user', 'field', 'species_name', 'species_type', 'severity', 'status')
@@ -91,7 +98,7 @@ class GrowthMonitoringAdmin(admin.ModelAdmin):
     search_fields = ['field__name', 'user__email']
     readonly_fields = ['created_at']
     date_hierarchy = 'observation_date'
-    
+
     fieldsets = (
         ('Основная информация', {
             'fields': ('user', 'field', 'observation_date', 'data_source')
@@ -115,7 +122,7 @@ class WeedDatabaseAdmin(admin.ModelAdmin):
     list_filter = ['danger_level']
     search_fields = ['name', 'name_latin']
     readonly_fields = ['created_at', 'updated_at']
-    
+
     fieldsets = (
         ('Основная информация', {
             'fields': ('name', 'name_latin', 'description', 'danger_level')

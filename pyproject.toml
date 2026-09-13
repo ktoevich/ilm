@@ -1,0 +1,17 @@
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["backend/api/migrations", "venv", "frontend"]
+
+[tool.ruff.lint]
+# F = pyflakes (undefined names, unused imports -- these catch real bugs),
+# E/W = pycodestyle, I = import order, B = bugbear, UP = pyupgrade.
+select = ["F", "E", "W", "I", "B", "UP", "C4"]
+ignore = [
+    "E501",   # line length is handled by the formatter
+    "B008",   # function calls in defaults are idiomatic in Django/DRF
+]
+
+[tool.ruff.lint.per-file-ignores]
+"backend/config/settings_test.py" = ["F403", "F405"]
+"backend/api/tests.py" = ["SLF001"]

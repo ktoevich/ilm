@@ -1,9 +1,10 @@
+import os
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torchvision import datasets, transforms, models
 from torch.utils.data import DataLoader
-import os
+from torchvision import datasets, models, transforms
 from tqdm import tqdm
 
 # 1. Настройка устройства (GPU если доступно, иначе CPU)
@@ -51,7 +52,7 @@ print("Старт обучения...")
 
 for epoch in range(epochs):
     print(f"\nЭпоха {epoch+1}/{epochs}")
-    
+
     # Каждая эпоха имеет фазу обучения и валидации
     for phase in ['train', 'val']:
         if phase == 'train':

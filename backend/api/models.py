@@ -1,7 +1,9 @@
-from django.db import models
-from django.contrib.auth.models import User
-from django.utils import timezone
 import json
+
+from django.contrib.auth.models import User
+from django.db import models
+from django.utils import timezone
+
 
 class Field(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='fields', null=True, blank=True, verbose_name="Владелец")
@@ -13,18 +15,18 @@ class Field(models.Model):
     area_hectares = models.FloatField(default=0, verbose_name="Площадь (га)")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     class Meta:
         verbose_name = "Поле"
         verbose_name_plural = "Поля"
         ordering = ['-created_at']
-    
+
     def __str__(self):
         return self.name
-    
+
     def get_bounds(self):
         return json.loads(self.bounds_json)
-    
+
     def set_bounds(self, bounds):
         self.bounds_json = json.dumps(bounds)
 
@@ -34,16 +36,16 @@ class CropType(models.Model):
     description = models.TextField(blank=True, null=True, verbose_name="Описание")
     icon = models.CharField(max_length=10, default="🌱", verbose_name="Иконка (эмодзи)")
     good_predecessors = models.ManyToManyField(
-        'self', 
-        blank=True, 
-        symmetrical=False, 
+        'self',
+        blank=True,
+        symmetrical=False,
         related_name='good_successors',
         verbose_name="Хорошие предшественники"
     )
     bad_predecessors = models.ManyToManyField(
-        'self', 
-        blank=True, 
-        symmetrical=False, 
+        'self',
+        blank=True,
+        symmetrical=False,
         related_name='bad_successors',
         verbose_name="Плохие предшественники"
     )
@@ -86,21 +88,21 @@ class CropType(models.Model):
     harvest_instructions = models.TextField(blank=True, null=True, verbose_name="Инструкции по сбору урожая")
     expected_yield_min = models.FloatField(default=1.0, verbose_name="Мин. урожайность (т/га)")
     expected_yield_max = models.FloatField(default=5.0, verbose_name="Макс. урожайность (т/га)")
-    
+
     class Meta:
         verbose_name = "Тип культуры"
         verbose_name_plural = "Типы культур"
         ordering = ['name']
-    
+
     def __str__(self):
         return self.name
-    
+
     def check_soil_compatibility(self, ph, nitrogen, phosphorus, potassium, moisture):
         score = 0
         max_score = 5
         issues = []
         recommendations = []
-        
+
         if self.ph_min <= ph <= self.ph_max:
             score += 1
         else:
@@ -110,7 +112,7 @@ class CropType(models.Model):
             else:
                 issues.append(f"pH почвы ({ph}) выше требуемого ({self.ph_max})")
                 recommendations.append("Рекомендуется гипсование или добавление серы")
-        
+
         n_thresholds = {'low': 30, 'medium': 45, 'high': 60}
         n_req = n_thresholds.get(self.nitrogen_requirement, 45)
         if nitrogen >= n_req * 0.7:
@@ -118,7 +120,7 @@ class CropType(models.Model):
         else:
             issues.append(f"Недостаточно азота (N): {nitrogen} мг/кг")
             recommendations.append("Внесите азотные удобрения (аммиачная селитра, мочевина)")
-        
+
         p_thresholds = {'low': 15, 'medium': 25, 'high': 40}
         p_req = p_thresholds.get(self.phosphorus_requirement, 25)
         if phosphorus >= p_req * 0.7:
@@ -126,7 +128,7 @@ class CropType(models.Model):
         else:
             issues.append(f"Недостаточно фосфора (P): {phosphorus} мг/кг")
             recommendations.append("Внесите фосфорные удобрения (суперфосфат)")
-        
+
         k_thresholds = {'low': 100, 'medium': 180, 'high': 250}
         k_req = k_thresholds.get(self.potassium_requirement, 180)
         if potassium >= k_req * 0.7:
@@ -134,7 +136,7 @@ class CropType(models.Model):
         else:
             issues.append(f"Недостаточно калия (K): {potassium} мг/кг")
             recommendations.append("Внесите калийные удобрения (хлористый калий)")
-        
+
         if self.moisture_min <= moisture <= self.moisture_max:
             score += 1
         else:
@@ -144,9 +146,9 @@ class CropType(models.Model):
             else:
                 issues.append(f"Влажность почвы ({moisture}%) выше требуемой")
                 recommendations.append("Обеспечьте дренаж или подождите подсыхания")
-        
+
         compatibility_percent = int((score / max_score) * 100)
-        
+
         return {
             'compatible': score >= 3,
             'score': score,
@@ -170,13 +172,13 @@ class CropRotation(models.Model):
     yield_amount = models.FloatField(blank=True, null=True, verbose_name="Урожайность (т/га)")
     notes = models.TextField(blank=True, null=True, verbose_name="Заметки")
     created_at = models.DateTimeField(auto_now_add=True)
-    
+
     class Meta:
         verbose_name = "Запись севооборота"
         verbose_name_plural = "Записи севооборота"
         ordering = ['-year', '-created_at']
         unique_together = ['field', 'year', 'season']
-    
+
     def __str__(self):
         return f"{self.field.name} - {self.crop_type.name} ({self.year})"
 
@@ -194,15 +196,15 @@ class SoilAnalysis(models.Model):
     overlay_image = models.TextField(blank=True, null=True, verbose_name="Маска плодородия")
     notes = models.TextField(blank=True, null=True, verbose_name="Заметки")
     created_at = models.DateTimeField(auto_now_add=True)
-    
+
     class Meta:
         verbose_name = "Анализ почвы"
         verbose_name_plural = "Анализы почвы"
         ordering = ['-analysis_date']
-    
+
     def __str__(self):
         return f"{self.field.name} - {self.analysis_date.strftime('%Y-%m-%d')}"
-    
+
     def calculate_fertility_index(self):
         index = (
             self.very_high_percent * 1.0 +
@@ -244,12 +246,12 @@ class InvasiveSpeciesReport(models.Model):
     detected_at = models.DateTimeField(default=timezone.now, verbose_name="Дата обнаружения")
     resolved_at = models.DateTimeField(blank=True, null=True, verbose_name="Дата устранения")
     created_at = models.DateTimeField(auto_now_add=True)
-    
+
     class Meta:
         verbose_name = "Отчёт об инвазивных видах"
         verbose_name_plural = "Отчёты об инвазивных видах"
         ordering = ['-detected_at']
-    
+
     def __str__(self):
         return f"{self.species_name} на {self.field.name}"
 
@@ -279,13 +281,13 @@ class GrowthMonitoring(models.Model):
     ], default='local_analysis', verbose_name="Источник данных")
     notes = models.TextField(blank=True, null=True, verbose_name="Заметки")
     created_at = models.DateTimeField(auto_now_add=True)
-    
+
     class Meta:
         verbose_name = "Запись мониторинга роста"
         verbose_name_plural = "Записи мониторинга роста"
         ordering = ['-observation_date']
         unique_together = ['field', 'observation_date']
-    
+
     def __str__(self):
         return f"{self.field.name} - {self.observation_date}"
 
@@ -305,11 +307,11 @@ class WeedDatabase(models.Model):
     ], default='medium', verbose_name="Уровень опасности")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     class Meta:
         verbose_name = "Сорняк (база)"
         verbose_name_plural = "Сорняки (база)"
         ordering = ['name']
-    
+
     def __str__(self):
         return self.name

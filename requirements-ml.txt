@@ -1,0 +1,12 @@
+# Optional: only needed to train the soil model or to run it at inference time
+# (ENABLE_SOIL_MODEL_ON_TILES=true). Deliberately kept out of requirements.txt.
+#
+# torch + torchvision add ~800 MB to the image, which does not fit in a
+# serverless bundle. The API works without them: the fertility pipeline falls
+# back to its documented heuristic and says so in the response.
+#
+#   pip install -r requirements.txt -r requirements-ml.txt
+
+torch==2.13.0
+torchvision==0.28.0
+tqdm>=4.66
